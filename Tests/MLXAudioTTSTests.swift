@@ -17,6 +17,7 @@ import Foundation
 
 // MARK: - Text Cleaning Unit Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SopranoTextCleaningTests {
 
     @Test func testTextCleaning() {

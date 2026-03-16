@@ -47,13 +47,22 @@ let package = Package(
             name: "mlx-audio-swift-stt",
             targets: ["mlx-audio-swift-stt"],
         ),
+        .executable(
+            name: "LocalVoiceUtility",
+            targets: ["LocalVoiceUtility"],
+        ),
+        .executable(
+            name: "local-voice-utility-cli",
+            targets: ["local-voice-utility-cli"],
+        ),
 
     ],
     dependencies: [
         .package(url: "https://github.com/ml-explore/mlx-swift.git", .upToNextMajor(from: "0.30.6")),
         .package(url: "https://github.com/ml-explore/mlx-swift-lm.git", .upToNextMajor(from: "2.30.3")),
         .package(url: "https://github.com/huggingface/swift-transformers.git", .upToNextMajor(from: "1.1.6")),
-        .package(url: "https://github.com/huggingface/swift-huggingface.git", .upToNextMajor(from: "0.6.0"))
+        .package(url: "https://github.com/huggingface/swift-huggingface.git", .upToNextMajor(from: "0.6.0")),
+        .package(url: "https://github.com/swiftlang/swift-testing.git", revision: "48a471ab313e858258ab0b9b0bf2cea55a50cefb")
     ],
     targets: [
         // MARK: - MLXAudioCore
@@ -96,7 +105,14 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Transformers", package: "swift-transformers"),
             ],
-            path: "Sources/MLXAudioTTS"
+            path: "Sources/MLXAudioTTS",
+            exclude: [
+                "Models/Llama/README.md",
+                "Models/Marvis/README.md",
+                "Models/PocketTTS/README.md",
+                "Models/Qwen3/README.md",
+                "Models/Soprano/README.md",
+            ]
         ),
 
         // MARK: - MLXAudioSTT
@@ -112,7 +128,13 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Transformers", package: "swift-transformers"),
             ],
-            path: "Sources/MLXAudioSTT"
+            path: "Sources/MLXAudioSTT",
+            exclude: [
+                "Models/GLMASR/README.md",
+                "Models/Parakeet/README.md",
+                "Models/Qwen3ASR/README.md",
+                "Models/VoxtralRealtime/README.md",
+            ]
         ),
 
         // MARK: - MLXAudioVAD
@@ -125,7 +147,11 @@ let package = Package(
                 .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
                 .product(name: "HuggingFace", package: "swift-huggingface"),
             ],
-            path: "Sources/MLXAudioVAD"
+            path: "Sources/MLXAudioVAD",
+            exclude: [
+                "Models/SmartTurn/README.md",
+                "Models/Sortformer/README.md",
+            ]
         ),
 
         // MARK: - MLXAudioSTS
@@ -144,7 +170,11 @@ let package = Package(
                 .product(name: "HuggingFace", package: "swift-huggingface"),
                 .product(name: "Transformers", package: "swift-transformers"),
             ],
-            path: "Sources/MLXAudioSTS"
+            path: "Sources/MLXAudioSTS",
+            exclude: [
+                "Models/LFMAudio/README.md",
+                "Models/SAMAudio/README.md",
+            ]
         ),
 
         // MARK: - MLXAudioUI
@@ -154,6 +184,7 @@ let package = Package(
                 "MLXAudioCore",
                 "MLXAudioTTS",
                 "MLXAudioSTS",
+                .product(name: "Testing", package: "swift-testing"),
             ],
             path: "Sources/MLXAudioUI"
         ),
@@ -161,22 +192,50 @@ let package = Package(
         .executableTarget(
             name: "mlx-audio-swift-tts",
             dependencies: ["MLXAudioCore", "MLXAudioTTS", "MLXAudioSTT"],
-            path: "Sources/Tools/mlx-audio-swift-tts"
+            path: "Sources/Tools/mlx-audio-swift-tts",
+            exclude: ["README.md"]
         ),
         .executableTarget(
             name: "mlx-audio-swift-codec",
             dependencies: ["MLXAudioCore", "MLXAudioCodecs"],
-            path: "Sources/Tools/mlx-audio-swift-codec"
+            path: "Sources/Tools/mlx-audio-swift-codec",
+            exclude: ["README.md"]
         ),
         .executableTarget(
             name: "mlx-audio-swift-sts",
             dependencies: ["MLXAudioCore", "MLXAudioSTS"],
-            path: "Sources/Tools/mlx-audio-swift-sts"
+            path: "Sources/Tools/mlx-audio-swift-sts",
+            exclude: ["README.md"]
         ),
         .executableTarget(
             name: "mlx-audio-swift-stt",
             dependencies: ["MLXAudioCore", "MLXAudioSTT"],
-            path: "Sources/Tools/mlx-audio-swift-stt"
+            path: "Sources/Tools/mlx-audio-swift-stt",
+            exclude: ["README.md"]
+        ),
+        .executableTarget(
+            name: "LocalVoiceUtility",
+            dependencies: [
+                "LocalVoiceUtilityKit",
+            ],
+            path: "Sources/LocalVoiceUtility"
+        ),
+        .target(
+            name: "LocalVoiceUtilityKit",
+            dependencies: [
+                "MLXAudioCore",
+                "MLXAudioTTS",
+                "MLXAudioSTT",
+                "MLXAudioVAD",
+            ],
+            path: "Sources/LocalVoiceUtilityKit"
+        ),
+        .executableTarget(
+            name: "local-voice-utility-cli",
+            dependencies: [
+                "LocalVoiceUtilityKit",
+            ],
+            path: "Sources/Tools/local-voice-utility-cli"
         ),
 
         // MARK: - Tests
@@ -189,6 +248,8 @@ let package = Package(
                 "MLXAudioSTT",
                 "MLXAudioVAD",
                 "MLXAudioSTS",
+                .product(name: "Testing", package: "swift-testing"),
+                .product(name: "_TestDiscovery", package: "swift-testing"),
             ],
             path: "Tests",
             resources: [

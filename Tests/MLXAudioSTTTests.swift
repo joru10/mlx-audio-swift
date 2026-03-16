@@ -14,6 +14,7 @@ import MLXNN
 @testable import MLXAudioSTT
 
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct GLMASRModuleSetupTests {
 
     // MARK: - Configuration Tests
@@ -425,6 +426,7 @@ struct GLMASRModuleSetupTests {
 
 // MARK: - Qwen3 ASR Module Setup Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct Qwen3ASRModuleSetupTests {
 
     // MARK: - Audio Encoder Config Tests
@@ -1116,6 +1118,7 @@ struct Qwen3ASRModuleSetupTests {
 
 // MARK: - Force Align Processor Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct ForceAlignProcessorTests {
 
     @Test func isKeptChar() {
@@ -1281,6 +1284,7 @@ struct ForceAlignProcessorTests {
 
 // MARK: - ForcedAlignResult Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct ForcedAlignResultTests {
 
     @Test func forcedAlignResultText() {
@@ -1315,6 +1319,7 @@ struct ForcedAlignResultTests {
 
 // MARK: - Helper Function Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct Qwen3ASRHelperTests {
 
     @Test func getFeatExtractOutputLengthsBasic() {
@@ -1358,6 +1363,7 @@ struct Qwen3ASRHelperTests {
 
 // MARK: - Audio Chunking Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SplitAudioIntoChunksTests {
 
     @Test func shortAudioReturnsOneChunk() {
@@ -1500,6 +1506,7 @@ struct SplitAudioIntoChunksTests {
         #expect(totalChunkSamples >= totalSamples, "Chunks should cover all audio samples")
     }
 }
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct ParakeetSTTTests {
 
     @Test func variantResolutionAndTypedParsing() throws {
@@ -1801,6 +1808,7 @@ struct ParakeetSTTTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct VoxtralRealtimeSTTTests {
     @Test func configDecodesNestedAudioEncodingArgs() throws {
         let json = """

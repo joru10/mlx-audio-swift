@@ -1,0 +1,3 @@
+[submodule "Vendor/mlx-audio-v041"]
+	path = Vendor/mlx-audio-v041
+	url = https://github.com/Blaizzy/mlx-audio.git

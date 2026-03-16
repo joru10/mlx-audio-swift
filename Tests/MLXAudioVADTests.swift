@@ -16,6 +16,7 @@ import MLXNN
 
 // MARK: - Configuration Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SortformerConfigTests {
 
     @Test func fcEncoderConfigDefaults() throws {
@@ -178,6 +179,7 @@ struct SortformerConfigTests {
 
 // MARK: - VADOutput Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct VADOutputTests {
 
     @Test func diarizationSegmentCreation() {
@@ -229,6 +231,7 @@ struct VADOutputTests {
 
 // MARK: - Feature Extraction Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SortformerFeatureTests {
 
     @Test func preemphasisFilterShape() {
@@ -310,6 +313,7 @@ struct SortformerFeatureTests {
 
 // MARK: - Weight Sanitization Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SortformerSanitizeTests {
 
     @Test func sanitizeConv2dWeights() {
@@ -377,6 +381,7 @@ struct SortformerSanitizeTests {
 
 // MARK: - Post-Processing Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SortformerPostprocessingTests {
 
     @Test func predsToSegmentsBasic() {
@@ -490,6 +495,7 @@ struct SortformerPostprocessingTests {
 
 // MARK: - Smart Turn Config Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SmartTurnConfigTests {
 
     @Test func smartTurnConfigDefaults() throws {
@@ -603,6 +609,7 @@ private func makeTinySmartTurnModel(dtype: String = "float32") throws -> SmartTu
     return model
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SmartTurnForwardTests {
 
     @Test func smartTurnForwardShapeAndRange() throws {
@@ -695,6 +702,7 @@ struct SmartTurnForwardTests {
 
 // MARK: - Smart Turn Sanitization Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SmartTurnSanitizeTests {
 
     @Test func smartTurnSanitizeDropsValConstants() {
@@ -745,6 +753,7 @@ struct SmartTurnSanitizeTests {
 
 // MARK: - Smart Turn Network Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SmartTurnNetworkTests {
 
     @Test func smartTurnFromPretrainedEvaluatesConversationalAudio() async throws {

@@ -3,6 +3,7 @@ import MLX
 
 @testable import MLXAudioSTT
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct IncrementalMelSpectrogramTests {
     @Test func firstChunkSingleSampleDoesNotCrash() {
         let mel = IncrementalMelSpectrogram(sampleRate: 16000, nFft: 400, hopLength: 160, nMels: 128)

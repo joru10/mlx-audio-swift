@@ -23,6 +23,7 @@ import Foundation
 // 2>&1 | grep -E "(Suite.*started|Test test.*started|passed after|failed after|TEST SUCCEEDED|TEST FAILED|Suite.*passed|Test run)"
 
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct VocosTests {
 
     @Test func testConvNeXtBlock() throws {
@@ -240,6 +241,7 @@ struct VocosTests {
 // 2>&1 | grep -E "(Suite.*started|Test test.*started|passed after|failed after|TEST SUCCEEDED|TEST FAILED|Suite.*passed|Test run)"
 
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct EncodecTests {
 
     @Test func testEncodecConfig() throws {
@@ -380,6 +382,7 @@ struct EncodecTests {
 // 2>&1 | grep -E "(Suite.*started|Test test.*started|passed after|failed after|TEST SUCCEEDED|TEST FAILED|Suite.*passed|Test run)"
 
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct DACVAETests {
 
     @Test func testDACVAEConfig() throws {

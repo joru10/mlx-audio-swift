@@ -58,12 +58,12 @@ private func testCleanup(_ name: String) {
 
 // MARK: - Top-level serialized wrapper (all suites run sequentially)
 
-@Suite("SmokeTests", .serialized)
+@Suite("SmokeTests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SmokeTests {
 
 // MARK: - Codecs Smoke Tests
 
-@Suite("Codecs Smoke Tests", .serialized)
+@Suite("Codecs Smoke Tests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct CodecsSmokeTests {
 
     @Test func snacEncodeDecodeCycle() async throws {
@@ -138,7 +138,7 @@ struct CodecsSmokeTests {
 
 // MARK: - TTS Smoke Tests
 
-@Suite("TTS Smoke Tests", .serialized)
+@Suite("TTS Smoke Tests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct TTSSmokeTests {
 
     @Test func qwen3Generate() async throws {
@@ -421,7 +421,7 @@ struct TTSSmokeTests {
 
 // MARK: - STT Smoke Tests
 
-@Suite("STT Smoke Tests", .serialized)
+@Suite("STT Smoke Tests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct STTSmokeTests {
 
     @Test func qwen3ASRTranscribe() async throws {
@@ -587,7 +587,7 @@ struct STTSmokeTests {
 
 // MARK: - VAD Smoke Tests
 
-@Suite("VAD Smoke Tests", .serialized)
+@Suite("VAD Smoke Tests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct VADSmokeTests {
 
     private static func saveSegmentsJSON(
@@ -738,7 +738,7 @@ struct VADSmokeTests {
 
 // MARK: - STS Smoke Tests
 
-@Suite("STS Smoke Tests", .serialized)
+@Suite("STS Smoke Tests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct STSSmokeTests {
 
     static let modelName = "mlx-community/LFM2.5-Audio-1.5B-6bit"

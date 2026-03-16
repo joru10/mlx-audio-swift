@@ -14,6 +14,7 @@ import MLXAudioCodecs
 @testable import MLXAudioCore
 @testable import MLXAudioSTS
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct MossFormer2SEConfigTests {
 
     @Test func mossFormer2SEConfigDefaults() {
@@ -118,6 +119,7 @@ struct MossFormer2SEConfigTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct MossFormer2SELayerTests {
 
     @Test func scaleNormShape() {
@@ -206,6 +208,7 @@ struct MossFormer2SELayerTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct MossFormer2SEDSPTests {
 
     @Test func hammingWindowSize() {
@@ -493,6 +496,7 @@ struct MossFormer2SEDSPTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct MossFormer2SEModelTests {
 
     private func smallConfig() throws -> MossFormer2SEConfig {
@@ -535,6 +539,7 @@ struct MossFormer2SEModelTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct MossFormer2SESanitizeTests {
 
     @Test func sanitizeStripModulePrefix() {
@@ -586,6 +591,7 @@ struct MossFormer2SESanitizeTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct MossFormer2SEIntegrationTests {
 
     @Test func fromLocalRejectsMissingSafetensors() throws {
@@ -654,6 +660,7 @@ struct MossFormer2SEIntegrationTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioConfigTests {
 
     @Test func samAudioConfigDefaults() {
@@ -679,6 +686,7 @@ struct SAMAudioConfigTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioBuildingBlockTests {
 
     @Test func samConv1dShapeWithStridePadding() {
@@ -724,6 +732,7 @@ struct SAMAudioBuildingBlockTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioTransformerTests {
 
     @Test func ditForwardShape() {
@@ -763,6 +772,7 @@ struct SAMAudioTransformerTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioTextEncoderTests {
 
     @Test func attentionMaskSemantics() {
@@ -802,6 +812,7 @@ struct SAMAudioTextEncoderTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioProcessorTests {
 
     @Test func processAnchorsSpanIndexing() throws {
@@ -854,6 +865,7 @@ struct SAMAudioProcessorTests {
     }
 }
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioModelTests {
 
     private func tinyConfig() -> SAMAudioConfig {
@@ -1020,7 +1032,7 @@ struct SAMAudioModelTests {
     }
 }
 
-@Suite("SAMAudio Weights Tests", .serialized)
+@Suite("SAMAudio Weights Tests", .serialized, .enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct SAMAudioWeightsTests {
 
     private func tinyConfig() -> SAMAudioConfig {
@@ -1163,6 +1175,7 @@ struct SAMAudioWeightsTests {
 
 // MARK: - LFMAudio Config Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct LFMAudioConfigTests {
 
     // MARK: - PreprocessorConfig
@@ -1347,6 +1360,7 @@ struct LFMAudioConfigTests {
 
 // MARK: - Module Setup Tests
 
+@Suite(.enabled(if: MLXTestSupport.runtimeAvailable, "Requires Metal runtime (xcrun metal)"))
 struct LFMAudioModuleSetupTests {
 
     @Test func modalityConstants() {
