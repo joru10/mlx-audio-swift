@@ -97,13 +97,14 @@ public struct PythonMLXBridge: Sendable {
         }
 
         let outputBase = workingDirectory.appendingPathComponent(UUID().uuidString)
+        let outputFormat = preferredSTTFormat(for: options)
         var args = baseCommandArgs(repoPath: repoPath)
         args += [
             "python", "-m", "mlx_audio.stt.generate",
             "--model", options.modelId,
             "--audio", effectiveAudioURL.path,
             "--output-path", outputBase.path,
-            "--format", "json",
+            "--format", outputFormat,
             "--language", options.languageCode,
         ]
         if options.useVAD {
@@ -111,8 +112,12 @@ public struct PythonMLXBridge: Sendable {
         }
 
         try await run(args: args, currentDirectory: repoPath)
-        let resultURL = outputBase.appendingPathExtension("json")
-        let document = try parseTranscriptJSON(at: resultURL, sourcePath: audioURL.path, modelID: options.modelId)
+        let document = try parseTranscriptOutput(
+            format: outputFormat,
+            baseURL: outputBase,
+            sourcePath: audioURL.path,
+            modelID: options.modelId
+        )
         return TranscriptionResult(document: document, enhancedAudioURL: enhancedAudioURL)
     }
 
@@ -174,6 +179,42 @@ public struct PythonMLXBridge: Sendable {
             fullText: fullText,
             segments: segments
         )
+    }
+
+    private func parseTranscriptText(at url: URL, sourcePath: String, modelID: String) throws -> TranscriptDocument {
+        let text = try String(contentsOf: url, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
+        return TranscriptDocument(
+            source: .init(path: sourcePath, type: "audio"),
+            model: .init(id: modelID),
+            fullText: text,
+            segments: text.isEmpty ? [] : [TranscriptSegment(startSec: 0, endSec: 0, text: text)]
+        )
+    }
+
+    private func parseTranscriptOutput(format: String, baseURL: URL, sourcePath: String, modelID: String) throws -> TranscriptDocument {
+        switch format {
+        case "json":
+            return try parseTranscriptJSON(at: baseURL.appendingPathExtension("json"), sourcePath: sourcePath, modelID: modelID)
+        case "txt":
+            return try parseTranscriptText(at: baseURL.appendingPathExtension("txt"), sourcePath: sourcePath, modelID: modelID)
+        default:
+            throw PythonMLXBridgeError.invalidOutput("Unsupported transcript format from Python bridge: \(format)")
+        }
+    }
+
+    private func preferredSTTFormat(for options: STTOptions) -> String {
+        if options.includeTimestamps && modelSupportsJSONSegments(options.modelId) {
+            return "json"
+        }
+        return "txt"
+    }
+
+    private func modelSupportsJSONSegments(_ modelID: String) -> Bool {
+        let lower = modelID.lowercased()
+        if lower.contains("sensevoice") {
+            return false
+        }
+        return true
     }
 
     private func resolvedRepoPath(_ provided: String?) -> String {
