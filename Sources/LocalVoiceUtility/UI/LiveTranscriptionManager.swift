@@ -224,15 +224,13 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
                 }
 
                 self.isTranscribing = true
-                self.livePartialText = backend == .pythonMLX
-                    ? "Transcribing... (Python model warm-up can take a few seconds)"
-                    : "Transcribing..."
+                self.livePartialText = liveStatusText(for: backend)
                 do {
                     let options = STTOptions(
                         modelId: self.modelID,
                         includeTimestamps: false,
                         useVAD: false,
-                        languageCode: self.languageCode,
+                        languageCode: self.resolvedLanguageCode(),
                         backend: self.resolvedBackend(),
                         pythonRepoPath: self.pythonRepoPath,
                         enhancementMode: self.enhancementMode
@@ -295,6 +293,25 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
         default:
             return backend
         }
+    }
+
+    private func resolvedLanguageCode() -> String {
+        let lower = modelID.lowercased()
+        if lower.contains("moonshine") {
+            return "en"
+        }
+        return languageCode
+    }
+
+    private func liveStatusText(for backend: InferenceBackend) -> String {
+        if backend == .pythonMLX {
+            let lower = modelID.lowercased()
+            if lower.contains("moonshine") {
+                return "Transcribing... (first Moonshine run may download model files for up to ~1 minute)"
+            }
+            return "Transcribing... (Python model warm-up can take a few seconds)"
+        }
+        return "Transcribing..."
     }
 
     private func startSpeechFallback() async throws {
