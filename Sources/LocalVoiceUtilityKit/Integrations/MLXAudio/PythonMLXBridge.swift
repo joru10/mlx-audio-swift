@@ -200,17 +200,52 @@ public struct PythonMLXBridge: Sendable {
     }
 
     private func baseCommandArgs(repoPath: String) -> [String] {
-        ["uv", "run", "--directory", repoPath]
+        let executable = (try? resolveUVExecutable()) ?? "uv"
+        return [executable, "run", "--directory", repoPath]
     }
 
     private func run(args: [String], currentDirectory: String) async throws {
-        let output = try await ProcessRunner.run(executable: "/usr/bin/env", arguments: args, currentDirectory: currentDirectory)
+        let executable = try resolveExecutable(args.first)
+        let output = try await ProcessRunner.run(executable: executable, arguments: Array(args.dropFirst()), currentDirectory: currentDirectory)
         guard output.exitCode == 0 else {
             let detail = [output.stdout, output.stderr]
                 .filter { !$0.isEmpty }
                 .joined(separator: "\n")
             throw PythonMLXBridgeError.commandFailed(detail.isEmpty ? "mlx-audio bridge failed." : detail)
         }
+    }
+
+    private func resolveExecutable(_ executable: String?) throws -> String {
+        guard let executable, !executable.isEmpty else {
+            throw PythonMLXBridgeError.toolMissing("Missing executable for mlx-audio bridge command.")
+        }
+        if executable.hasPrefix("/") {
+            return executable
+        }
+        if executable == "uv" {
+            return try resolveUVExecutable()
+        }
+        return executable
+    }
+
+    private func resolveUVExecutable() throws -> String {
+        let env = ProcessInfo.processInfo.environment
+        let home = env["HOME"] ?? NSHomeDirectory()
+        let candidates = [
+            env["UV_BIN"],
+            "\(home)/.local/bin/uv",
+            "/opt/homebrew/bin/uv",
+            "/usr/local/bin/uv",
+            "/usr/bin/uv",
+        ].compactMap { $0 }
+
+        if let match = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return match
+        }
+
+        throw PythonMLXBridgeError.toolMissing(
+            "Could not find `uv` for the Python mlx-audio bridge. Install uv or set UV_BIN in the app environment."
+        )
     }
 
 #if os(macOS)
