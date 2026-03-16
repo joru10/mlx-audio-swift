@@ -410,6 +410,10 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
             pb.clearContents()
             pb.setString(text, forType: .string)
         case .typeToFrontmost:
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.localvoiceutility.desktop" {
+                latestError = "Type into Front App is ignored while Local Voice Utility is frontmost. Switch to the target app first, or use Action = None while testing."
+                return
+            }
             _ = runProcess("/usr/bin/osascript", ["-e", appleScriptForKeystroke(text)])
         case .shell:
             let command = shellTemplate.replacingOccurrences(of: "{{text}}", with: text)
