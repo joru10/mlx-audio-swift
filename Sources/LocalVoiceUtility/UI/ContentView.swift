@@ -428,6 +428,7 @@ struct TranscribeScreen: View {
 }
 
 struct LivePlaceholderScreen: View {
+    @EnvironmentObject private var store: AppStore
     @StateObject private var manager = LiveTranscriptionManager()
 
     var body: some View {
@@ -448,8 +449,30 @@ struct LivePlaceholderScreen: View {
                 }
             }
 
+            Picker("Live preset", selection: $manager.modelID) {
+                ForEach(SpeechCatalog.sttPresets) { preset in
+                    Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                }
+            }
+
             TextField("STT model", text: $manager.modelID)
                 .textFieldStyle(.roundedBorder)
+
+            HStack(spacing: 12) {
+                Picker("Backend", selection: $manager.backend) {
+                    ForEach(InferenceBackend.allCases, id: \.self) { option in
+                        Text(option.rawValue).tag(option)
+                    }
+                }
+                .frame(maxWidth: 220)
+
+                Picker("Enhancement", selection: $manager.enhancementMode) {
+                    ForEach(SpeechEnhancementMode.allCases, id: \.self) { mode in
+                        Text(mode.displayName).tag(mode)
+                    }
+                }
+                .frame(maxWidth: 220)
+            }
 
             Picker("Live language", selection: $manager.languageCode) {
                 ForEach(SpeechCatalog.languages) { language in
@@ -520,6 +543,17 @@ struct LivePlaceholderScreen: View {
                 .foregroundStyle(.secondary)
         }
         .padding(24)
+        .onAppear {
+            manager.languageCode = store.settings.preferredTranscriptionLanguage
+            manager.backend = store.settings.sttDefaults.backend
+            manager.enhancementMode = store.settings.sttDefaults.enhancementMode
+            manager.pythonRepoPath = store.settings.pythonMLXRepoPath
+        }
+        .onChange(of: manager.modelID) { _, newValue in
+            if let preset = SpeechCatalog.sttPresets.first(where: { $0.id == newValue }) {
+                manager.backend = preset.backend
+            }
+        }
         .onDisappear {
             manager.stop()
         }

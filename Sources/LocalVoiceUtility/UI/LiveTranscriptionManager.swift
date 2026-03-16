@@ -2,6 +2,7 @@ import AVFoundation
 import AppKit
 import Foundation
 import LocalVoiceUtilityKit
+import MLXAudioCore
 import Speech
 
 struct AudioInputDevice: Identifiable, Hashable {
@@ -63,6 +64,8 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
     @Published var selectedInputDeviceID: String = ""
     @Published var modelID = STTOptions().modelId
     @Published var languageCode = STTOptions().languageCode
+    @Published var backend: InferenceBackend = STTOptions().backend
+    @Published var enhancementMode: SpeechEnhancementMode = .off
     @Published var transcriptLines: [String] = []
     @Published var livePartialText: String = ""
     @Published var latestError: String?
@@ -70,6 +73,7 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
     @Published var actionMode: LiveActionMode = .none
     @Published var shellTemplate = "echo '{{text}}'"
     @Published var webhookURL = ""
+    @Published var pythonRepoPath = PythonMLXBridge.defaultRepoPath
 
     private let sttService = STTService()
     private let captureSession = AVCaptureSession()
@@ -108,9 +112,19 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
         latestError = nil
 
         Task { @MainActor in
+            let effectiveBackend = resolvedBackend()
             do {
-                try MLXRuntimePreflight.ensureReady()
                 usingSpeechFallback = false
+                if effectiveBackend == .pythonMLX {
+                    runtimeModeDescription = "Python MLX micro-batch"
+                    try configureCaptureSession()
+                    captureSession.startRunning()
+                    isRunning = true
+                    startLoop()
+                    return
+                }
+
+                try MLXRuntimePreflight.ensureReady()
                 runtimeModeDescription = "MLX (local)"
 
                 try configureCaptureSession()
@@ -195,7 +209,7 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
         loopTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: 1_500_000_000)
+                try? await Task.sleep(nanoseconds: resolvedBackend() == .pythonMLX ? 2_500_000_000 : 1_500_000_000)
                 if !self.isRunning || self.isTranscribing {
                     continue
                 }
@@ -206,22 +220,73 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
                 }
 
                 self.isTranscribing = true
+                self.livePartialText = "Transcribing..."
                 do {
-                    let transcript = try await self.sttService.transcribe(
-                        samples: chunk.samples,
-                        sampleRate: chunk.sampleRate,
-                        options: STTOptions(modelId: self.modelID, includeTimestamps: false, useVAD: false, languageCode: self.languageCode)
+                    let options = STTOptions(
+                        modelId: self.modelID,
+                        includeTimestamps: false,
+                        useVAD: false,
+                        languageCode: self.languageCode,
+                        backend: self.resolvedBackend(),
+                        pythonRepoPath: self.pythonRepoPath,
+                        enhancementMode: self.enhancementMode
                     )
+                    let transcript: TranscriptDocument
+                    if self.resolvedBackend() == .pythonMLX {
+                        transcript = try await self.transcribeChunkViaFile(chunk.samples, sampleRate: chunk.sampleRate, options: options)
+                    } else {
+                        transcript = try await self.sttService.transcribe(
+                            samples: chunk.samples,
+                            sampleRate: chunk.sampleRate,
+                            options: options
+                        )
+                    }
                     let text = transcript.fullText.trimmingCharacters(in: .whitespacesAndNewlines)
                     if !text.isEmpty {
                         self.transcriptLines.append(text)
+                        self.livePartialText = text
                         await self.route(text: text)
+                    } else {
+                        self.livePartialText = ""
                     }
                 } catch {
                     self.latestError = error.localizedDescription
+                    self.livePartialText = ""
                 }
                 self.isTranscribing = false
             }
+        }
+    }
+
+    private func transcribeChunkViaFile(_ samples: [Float], sampleRate: Int, options: STTOptions) async throws -> TranscriptDocument {
+        let tempURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent(UUID().uuidString)
+            .appendingPathExtension("wav")
+        defer { try? FileManager.default.removeItem(at: tempURL) }
+
+        try AudioUtils.writeWavFile(samples: samples, sampleRate: Double(sampleRate), fileURL: tempURL)
+        return try await sttService.transcribe(audioURL: tempURL, options: options)
+    }
+
+    private func resolvedBackend() -> InferenceBackend {
+        switch backend {
+        case .automatic:
+            let lower = modelID.lowercased()
+            if enhancementMode != .off {
+                return .pythonMLX
+            }
+            if lower.contains("canary")
+                || lower.contains("moonshine")
+                || lower.contains("mms")
+                || lower.contains("granite")
+                || lower.contains("firered")
+                || lower.contains("sensevoice")
+            {
+                return .pythonMLX
+            }
+            return .swiftMLX
+        default:
+            return backend
         }
     }
 
