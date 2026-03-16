@@ -209,18 +209,24 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
         loopTask = Task { [weak self] in
             guard let self else { return }
             while !Task.isCancelled {
-                try? await Task.sleep(nanoseconds: resolvedBackend() == .pythonMLX ? 2_500_000_000 : 1_500_000_000)
+                let backend = resolvedBackend()
+                try? await Task.sleep(nanoseconds: backend == .pythonMLX ? 3_000_000_000 : 1_500_000_000)
                 if !self.isRunning || self.isTranscribing {
                     continue
                 }
 
                 let chunk = self.buffer.drain()
-                if chunk.samples.count < max(8_000, chunk.sampleRate) {
+                let minimumSampleCount = backend == .pythonMLX
+                    ? max(chunk.sampleRate * 2, 24_000)
+                    : max(8_000, chunk.sampleRate)
+                if chunk.samples.count < minimumSampleCount {
                     continue
                 }
 
                 self.isTranscribing = true
-                self.livePartialText = "Transcribing..."
+                self.livePartialText = backend == .pythonMLX
+                    ? "Transcribing... (Python model warm-up can take a few seconds)"
+                    : "Transcribing..."
                 do {
                     let options = STTOptions(
                         modelId: self.modelID,
@@ -232,7 +238,7 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
                         enhancementMode: self.enhancementMode
                     )
                     let transcript: TranscriptDocument
-                    if self.resolvedBackend() == .pythonMLX {
+                    if backend == .pythonMLX {
                         transcript = try await self.transcribeChunkViaFile(chunk.samples, sampleRate: chunk.sampleRate, options: options)
                     } else {
                         transcript = try await self.sttService.transcribe(
@@ -264,7 +270,8 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
             .appendingPathExtension("wav")
         defer { try? FileManager.default.removeItem(at: tempURL) }
 
-        try AudioUtils.writeWavFile(samples: samples, sampleRate: Double(sampleRate), fileURL: tempURL)
+        let prepared = try resampleAudio(samples, from: sampleRate, to: 16_000)
+        try AudioUtils.writeWavFile(samples: prepared, sampleRate: 16_000, fileURL: tempURL)
         return try await sttService.transcribe(audioURL: tempURL, options: options)
     }
 
