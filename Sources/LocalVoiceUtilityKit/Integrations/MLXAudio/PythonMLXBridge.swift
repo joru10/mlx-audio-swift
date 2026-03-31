@@ -30,9 +30,10 @@ public struct PythonMLXBridge: Sendable {
             return env
         }
         let candidates = [
+            "/Users/joru2/Applications/MLXAudio/Vendor/mlx-audio",
             "/Users/joru2/Applications/MLXAudio/Vendor/mlx-audio-v041",
-            "/Users/joru2/Applications/mlx-audio-v041",
             "/Users/joru2/Applications/mlx-audio",
+            "/Users/joru2/Applications/mlx-audio-v041",
         ]
         return candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) ?? candidates[0]
     }()
