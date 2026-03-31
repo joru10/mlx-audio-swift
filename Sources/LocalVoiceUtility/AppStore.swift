@@ -6,6 +6,7 @@ import LocalVoiceUtilityKit
 final class AppStore: ObservableObject {
     enum Screen: String, CaseIterable, Hashable {
         case home = "Home"
+        case scale = "Scale Capture"
         case pdf = "PDF -> Audio"
         case url = "URL -> Audio"
         case transcribe = "Transcribe"
@@ -17,6 +18,9 @@ final class AppStore: ObservableObject {
 
     @Published var selectedScreen: Screen = .home
     @Published var jobs: [JobRecord] = []
+    @Published var scaleCaptures: [ScaleCaptureRecord] = []
+    @Published var selectedScaleCaptureID: UUID?
+    @Published var latestScaleCapturePreview: String = ""
     @Published var settings: AppSettings
     @Published var latestError: String?
 
@@ -36,6 +40,7 @@ final class AppStore: ObservableObject {
             settings = try coordinator.loadSettings()
             _ = try await coordinator.recoverInterruptedJobs()
             jobs = try await coordinator.loadJobs()
+            scaleCaptures = try await coordinator.loadScaleCaptures()
         } catch {
             latestError = error.localizedDescription
         }
@@ -125,6 +130,28 @@ final class AppStore: ObservableObject {
         } catch {
             latestError = error.localizedDescription
         }
+    }
+
+    func captureScaleReading(urlString: String, title: String, notes: String?) async throws -> ScaleCaptureRecord {
+        let record = try await coordinator.captureScaleReading(urlString: urlString, title: title, notes: notes)
+        scaleCaptures.insert(record, at: 0)
+        selectedScaleCaptureID = record.id
+        latestScaleCapturePreview = await coordinator.previewScaleCapture(record)
+        return record
+    }
+
+    func loadScaleCapturePreview(_ record: ScaleCaptureRecord) {
+        Task {
+            let preview = await coordinator.previewScaleCapture(record)
+            await MainActor.run {
+                self.latestScaleCapturePreview = preview
+                self.selectedScaleCaptureID = record.id
+            }
+        }
+    }
+
+    var scaleCaptureDirectoryPath: String {
+        coordinator.paths.scaleReadingsDirectory.path
     }
 
     private func upsertJob(_ job: JobRecord) {

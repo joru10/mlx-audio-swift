@@ -5,6 +5,7 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
     public let jobStore: JobStore
     public let modelStore: ModelStore
     public let actionStore: ActionStore
+    public let scaleCaptureStore: ScaleCaptureStore
     public let queue: JobQueue
 
     private let ttsService = TTSService()
@@ -15,6 +16,7 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
         jobStore = JobStore(paths: paths)
         modelStore = ModelStore(paths: paths)
         actionStore = ActionStore(paths: paths)
+        scaleCaptureStore = ScaleCaptureStore(paths: paths)
         queue = JobQueue()
     }
 
@@ -150,6 +152,22 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
 
     public func loadJobs() async throws -> [JobRecord] {
         try await jobStore.loadJobs()
+    }
+
+    public func loadScaleCaptures() async throws -> [ScaleCaptureRecord] {
+        try await scaleCaptureStore.loadCaptures()
+    }
+
+    public func captureScaleReading(
+        urlString: String,
+        title: String?,
+        notes: String?
+    ) async throws -> ScaleCaptureRecord {
+        try await scaleCaptureStore.captureReading(from: urlString, title: title, notes: notes)
+    }
+
+    public func previewScaleCapture(_ record: ScaleCaptureRecord, limit: Int = 4_000) async -> String {
+        await scaleCaptureStore.preview(for: record, limit: limit)
     }
 
     public func recoverInterruptedJobs() async throws -> [JobRecord] {
