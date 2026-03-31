@@ -31,8 +31,6 @@ struct ContentView: View {
         switch store.selectedScreen {
         case .home:
             HomeScreen()
-        case .scale:
-            ScaleCaptureScreen()
         case .pdf:
             PDFToAudioScreen()
         case .url:
@@ -59,7 +57,6 @@ struct HomeScreen: View {
             Text("Quick Actions")
                 .font(.title2.bold())
             HStack {
-                quickTile(title: "Capture Scale Reading", action: { store.selectedScreen = .scale })
                 quickTile(title: "Read a PDF", action: { store.selectedScreen = .pdf })
                 quickTile(title: "Read a Web Page", action: { store.selectedScreen = .url })
                 quickTile(title: "Transcribe Audio/Video", action: { store.selectedScreen = .transcribe })
@@ -75,15 +72,6 @@ struct HomeScreen: View {
             }
         }
         .padding(24)
-        .onAppear {
-            if store.selectedScaleCaptureID == nil, let first = store.scaleCaptures.first {
-                store.loadScaleCapturePreview(first)
-            }
-        }
-        .onChange(of: store.selectedScaleCaptureID) { _, newValue in
-            guard let newValue, let capture = store.scaleCaptures.first(where: { $0.id == newValue }) else { return }
-            store.loadScaleCapturePreview(capture)
-        }
     }
 
     @ViewBuilder
@@ -93,142 +81,6 @@ struct HomeScreen: View {
                 .frame(maxWidth: .infinity, minHeight: 80)
         }
         .buttonStyle(.borderedProminent)
-    }
-}
-
-struct ScaleCaptureScreen: View {
-    @EnvironmentObject private var store: AppStore
-    @State private var readingURL = ""
-    @State private var readingTitle = ""
-    @State private var notes = ""
-    @State private var isSaving = false
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("Scale Capture")
-                .font(.title2.bold())
-
-            Text("Paste the latest reading URL from your phone. The app saves the raw payload and metadata under Application Support so the Mac app can analyze it later.")
-                .foregroundStyle(.secondary)
-
-            Form {
-                Section("Capture") {
-                    TextField("https://...", text: $readingURL)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Label (optional)", text: $readingTitle)
-                        .textFieldStyle(.roundedBorder)
-                    TextField("Notes (optional)", text: $notes, axis: .vertical)
-                        .lineLimit(3, reservesSpace: true)
-                    HStack {
-                        Button(isSaving ? "Saving..." : "Fetch and Save") {
-                            saveReading()
-                        }
-                        .buttonStyle(.borderedProminent)
-                        .disabled(isSaving || readingURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-
-                        Button("Open Capture Folder") {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: store.scaleCaptureDirectoryPath))
-                        }
-                    }
-                    Text(store.scaleCaptureDirectoryPath)
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-
-            HStack {
-                Text("Saved Readings")
-                    .font(.headline)
-                Spacer()
-                Button("Refresh") {
-                    Task { await store.loadInitialState() }
-                }
-            }
-
-            HStack(spacing: 16) {
-                List(store.scaleCaptures, selection: $store.selectedScaleCaptureID) { capture in
-                    VStack(alignment: .leading, spacing: 4) {
-                        Text(capture.title)
-                        Text(capture.createdAt.formatted(date: .abbreviated, time: .shortened))
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        Text(capture.sourceURL)
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                        Text("\(capture.contentType) • \(capture.byteCount) bytes")
-                            .font(.caption2)
-                            .foregroundStyle(.secondary)
-                    }
-                    .tag(capture.id)
-                    .contentShape(Rectangle())
-                    .contextMenu {
-                        Button("Reveal Payload") {
-                            NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: capture.rawPayloadPath)])
-                        }
-                        Button("Open Metadata") {
-                            NSWorkspace.shared.open(URL(fileURLWithPath: capture.metadataPath))
-                        }
-                    }
-                }
-                .frame(minWidth: 320, maxWidth: 420)
-
-                VStack(alignment: .leading, spacing: 10) {
-                    if let selected = selectedCapture {
-                        Text(selected.title)
-                            .font(.headline)
-                        Text(selected.sourceURL)
-                            .font(.caption)
-                            .foregroundStyle(.secondary)
-                        HStack {
-                            Button("Reveal Payload") {
-                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: selected.rawPayloadPath)])
-                            }
-                            Button("Open Metadata") {
-                                NSWorkspace.shared.open(URL(fileURLWithPath: selected.metadataPath))
-                            }
-                        }
-                        ScrollView {
-                            Text(store.latestScaleCapturePreview.isEmpty ? "Select a saved capture to preview its payload." : store.latestScaleCapturePreview)
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
-                        .frame(maxWidth: .infinity, maxHeight: .infinity)
-                    } else {
-                        Text("Select a saved capture to preview the payload.")
-                            .foregroundStyle(.secondary)
-                        Spacer()
-                    }
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            }
-        }
-        .padding(24)
-    }
-
-    private var selectedCapture: ScaleCaptureRecord? {
-        guard let selectedScaleCaptureID = store.selectedScaleCaptureID else { return nil }
-        return store.scaleCaptures.first(where: { $0.id == selectedScaleCaptureID })
-    }
-
-    private func saveReading() {
-        isSaving = true
-        let currentURL = readingURL.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentTitle = readingTitle.trimmingCharacters(in: .whitespacesAndNewlines)
-        let currentNotes = notes.trimmingCharacters(in: .whitespacesAndNewlines)
-        Task { @MainActor in
-            do {
-                _ = try await store.captureScaleReading(
-                    urlString: currentURL,
-                    title: currentTitle,
-                    notes: currentNotes.isEmpty ? nil : currentNotes
-                )
-                readingTitle = ""
-                notes = ""
-            } catch {
-                store.latestError = error.localizedDescription
-            }
-            isSaving = false
-        }
     }
 }
 

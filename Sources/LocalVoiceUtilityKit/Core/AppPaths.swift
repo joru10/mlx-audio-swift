@@ -8,7 +8,6 @@ public struct AppPaths: Sendable {
     public let outputsDirectory: URL
     public let modelsDirectory: URL
     public let logsDirectory: URL
-    public let scaleReadingsDirectory: URL
 
     public init(fileManager: FileManager = .default) throws {
         let appSupportBase = try fileManager.url(
@@ -22,9 +21,8 @@ public struct AppPaths: Sendable {
         outputsDirectory = appSupportRoot.appendingPathComponent("outputs", isDirectory: true)
         modelsDirectory = appSupportRoot.appendingPathComponent("models", isDirectory: true)
         logsDirectory = appSupportRoot.appendingPathComponent("logs", isDirectory: true)
-        scaleReadingsDirectory = appSupportRoot.appendingPathComponent("scale-readings", isDirectory: true)
 
-        try [appSupportRoot, jobsDirectory, outputsDirectory, modelsDirectory, logsDirectory, scaleReadingsDirectory].forEach {
+        try [appSupportRoot, jobsDirectory, outputsDirectory, modelsDirectory, logsDirectory].forEach {
             try fileManager.createDirectory(at: $0, withIntermediateDirectories: true)
         }
     }
@@ -39,9 +37,5 @@ public struct AppPaths: Sendable {
 
     public var settingsURL: URL {
         appSupportRoot.appendingPathComponent("settings.json")
-    }
-
-    public var scaleCapturesIndexURL: URL {
-        scaleReadingsDirectory.appendingPathComponent("captures.json")
     }
 }
