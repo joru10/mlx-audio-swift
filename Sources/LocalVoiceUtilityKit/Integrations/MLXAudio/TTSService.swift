@@ -67,6 +67,10 @@ public struct TTSService {
         case .automatic:
             let lower = options.modelId.lowercased()
             return lower.contains("fish")
+                || lower.contains("irodori")
+                || lower.contains("kugel")
+                || lower.contains("voxtral")
+                || lower.contains("tada")
         }
     }
 }

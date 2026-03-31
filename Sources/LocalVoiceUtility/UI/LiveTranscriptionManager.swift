@@ -286,6 +286,9 @@ final class LiveTranscriptionManager: NSObject, ObservableObject {
                 || lower.contains("granite")
                 || lower.contains("firered")
                 || lower.contains("sensevoice")
+                || lower.contains("whisper")
+                || lower.contains("cohere")
+                || lower.contains("parakeet")
             {
                 return .pythonMLX
             }

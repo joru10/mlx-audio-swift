@@ -165,6 +165,10 @@ public actor STTService {
                 || lower.contains("granite")
                 || lower.contains("firered")
                 || lower.contains("sensevoice")
+                || lower.contains("whisper")
+                || lower.contains("cohere")
+                || lower.contains("qwen2-audio")
+                || lower.contains("parakeet")
         }
     }
 

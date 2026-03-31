@@ -108,8 +108,8 @@ struct PDFToAudioScreen: View {
             }
             Section("Generation") {
                 Picker("Preset", selection: $modelID) {
-                    ForEach(SpeechCatalog.ttsPresets) { preset in
-                        Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                    ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
+                        Text(presetMenuLabel(preset)).tag(preset.id)
                     }
                 }
                 TextField("TTS model", text: $modelID)
@@ -119,10 +119,11 @@ struct PDFToAudioScreen: View {
                     }
                 }
                 Picker("Language", selection: $languageCode) {
-                    ForEach(SpeechCatalog.languages) { language in
+                    ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: modelID), allowAutoDetect: false)) { language in
                         Text(language.label).tag(language.code)
                     }
                 }
+                presetDetailsView(for: SpeechCatalog.preset(for: modelID))
                 Picker("Chunk mode", selection: $chunkMode) {
                     ForEach(TTSOptions.ChunkMode.allCases, id: \.self) { mode in
                         Text(mode.rawValue)
@@ -173,8 +174,11 @@ struct PDFToAudioScreen: View {
         }
         .onChange(of: modelID) { _, newValue in
             selectedVoiceIdentifier = resolveDefaultVoice(for: newValue, settings: store.settings)
-            if let preset = SpeechCatalog.ttsPresets.first(where: { $0.id == newValue }) {
+            if let preset = SpeechCatalog.preset(for: newValue) {
                 backend = preset.backend
+                if let firstLanguage = SpeechCatalog.languageOptions(for: preset, allowAutoDetect: false).first?.code {
+                    languageCode = firstLanguage
+                }
             }
         }
     }
@@ -236,8 +240,8 @@ struct URLToAudioScreen: View {
 
             Section("Generation") {
                 Picker("Preset", selection: $modelID) {
-                    ForEach(SpeechCatalog.ttsPresets) { preset in
-                        Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                    ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
+                        Text(presetMenuLabel(preset)).tag(preset.id)
                     }
                 }
                 TextField("TTS model", text: $modelID)
@@ -247,10 +251,11 @@ struct URLToAudioScreen: View {
                     }
                 }
                 Picker("Language", selection: $languageCode) {
-                    ForEach(SpeechCatalog.languages) { language in
+                    ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: modelID), allowAutoDetect: false)) { language in
                         Text(language.label).tag(language.code)
                     }
                 }
+                presetDetailsView(for: SpeechCatalog.preset(for: modelID))
                 TextField("Max chunk chars", text: $maxChunkChars)
                 Picker("Reader voice", selection: $selectedVoiceIdentifier) {
                     Text("System Default").tag("")
@@ -301,8 +306,11 @@ struct URLToAudioScreen: View {
         }
         .onChange(of: modelID) { _, newValue in
             selectedVoiceIdentifier = resolveDefaultVoice(for: newValue, settings: store.settings)
-            if let preset = SpeechCatalog.ttsPresets.first(where: { $0.id == newValue }) {
+            if let preset = SpeechCatalog.preset(for: newValue) {
                 backend = preset.backend
+                if let firstLanguage = SpeechCatalog.languageOptions(for: preset, allowAutoDetect: false).first?.code {
+                    languageCode = firstLanguage
+                }
             }
         }
     }
@@ -361,8 +369,8 @@ struct TranscribeScreen: View {
             }
             Section("Transcription") {
                 Picker("Preset", selection: $modelID) {
-                    ForEach(SpeechCatalog.sttPresets) { preset in
-                        Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                    ForEach(SpeechCatalog.sttModels(for: .fileTranscription)) { preset in
+                        Text(presetMenuLabel(preset)).tag(preset.id)
                     }
                 }
                 TextField("STT model", text: $modelID)
@@ -372,16 +380,18 @@ struct TranscribeScreen: View {
                     }
                 }
                 Picker("Language", selection: $languageCode) {
-                    ForEach(SpeechCatalog.languages) { language in
+                    ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: modelID), allowAutoDetect: true)) { language in
                         Text(language.label).tag(language.code)
                     }
                 }
+                presetDetailsView(for: SpeechCatalog.preset(for: modelID))
                 Picker("Enhancement", selection: $enhancementMode) {
                     ForEach(SpeechEnhancementMode.allCases, id: \.self) { mode in
                         Text(mode.displayName).tag(mode)
                     }
                 }
                 Toggle("Include timestamps JSON", isOn: $includeTimestamps)
+                    .disabled(!SpeechCatalog.supportsTimestamps(modelID))
                 Toggle("Use VAD segmentation", isOn: $useVAD)
             }
             Button("Run Transcription") {
@@ -409,8 +419,14 @@ struct TranscribeScreen: View {
             enhancementMode = store.settings.sttDefaults.enhancementMode
         }
         .onChange(of: modelID) { _, newValue in
-            if let preset = SpeechCatalog.sttPresets.first(where: { $0.id == newValue }) {
+            if let preset = SpeechCatalog.preset(for: newValue) {
                 backend = preset.backend
+                if !SpeechCatalog.supportsTimestamps(newValue) {
+                    includeTimestamps = false
+                }
+                if let firstLanguage = SpeechCatalog.languageOptions(for: preset, allowAutoDetect: true).first?.code {
+                    languageCode = firstLanguage
+                }
             }
         }
     }
@@ -450,8 +466,8 @@ struct LivePlaceholderScreen: View {
             }
 
             Picker("Live preset", selection: $manager.modelID) {
-                ForEach(SpeechCatalog.sttPresets) { preset in
-                    Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                ForEach(SpeechCatalog.sttModels(for: .liveTranscription)) { preset in
+                    Text(presetMenuLabel(preset)).tag(preset.id)
                 }
             }
 
@@ -475,11 +491,12 @@ struct LivePlaceholderScreen: View {
             }
 
             Picker("Live language", selection: $manager.languageCode) {
-                ForEach(SpeechCatalog.languages) { language in
+                ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: manager.modelID), allowAutoDetect: true)) { language in
                     Text(language.label).tag(language.code)
                 }
             }
             .frame(maxWidth: 260)
+            presetDetailsView(for: SpeechCatalog.preset(for: manager.modelID))
 
             HStack(spacing: 12) {
                 Picker("Action", selection: $manager.actionMode) {
@@ -550,8 +567,11 @@ struct LivePlaceholderScreen: View {
             manager.pythonRepoPath = store.settings.pythonMLXRepoPath
         }
         .onChange(of: manager.modelID) { _, newValue in
-            if let preset = SpeechCatalog.sttPresets.first(where: { $0.id == newValue }) {
+            if let preset = SpeechCatalog.preset(for: newValue) {
                 manager.backend = preset.backend
+                if let firstLanguage = SpeechCatalog.languageOptions(for: preset, allowAutoDetect: true).first?.code {
+                    manager.languageCode = firstLanguage
+                }
             }
         }
         .onDisappear {
@@ -671,16 +691,26 @@ struct ModelsScreen: View {
             GroupBox("TTS presets") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(SpeechCatalog.ttsPresets) { preset in
-                        Text("\(preset.id) (\(preset.backend.rawValue)) — \(preset.summary)")
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(preset.title) (\(preset.backend.rawValue)) — \(preset.summary)")
+                            Text("Workflows: \(preset.workflows.map(\.rawValue).sorted().joined(separator: ", "))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
             GroupBox("STT presets") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(SpeechCatalog.sttPresets) { preset in
-                        Text("\(preset.id) (\(preset.backend.rawValue)) — \(preset.summary)")
-                            .frame(maxWidth: .infinity, alignment: .leading)
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(preset.title) (\(preset.backend.rawValue)) — \(preset.summary)")
+                            Text("Workflows: \(preset.workflows.map(\.rawValue).sorted().joined(separator: ", "))")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
                     }
                 }
             }
@@ -705,8 +735,8 @@ struct SettingsScreen: View {
             }
             Section("TTS") {
                 Picker("Default TTS preset", selection: $store.settings.ttsDefaults.modelId) {
-                    ForEach(SpeechCatalog.ttsPresets) { preset in
-                        Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                    ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
+                        Text(presetMenuLabel(preset)).tag(preset.id)
                     }
                 }
                 Picker("TTS backend", selection: $store.settings.ttsDefaults.backend) {
@@ -759,8 +789,8 @@ struct SettingsScreen: View {
             }
             Section("STT") {
                 Picker("Default STT preset", selection: $store.settings.sttDefaults.modelId) {
-                    ForEach(SpeechCatalog.sttPresets) { preset in
-                        Text("\(preset.id) — \(preset.summary)").tag(preset.id)
+                    ForEach(SpeechCatalog.sttModels(for: .fileTranscription)) { preset in
+                        Text(presetMenuLabel(preset)).tag(preset.id)
                     }
                 }
                 Picker("STT backend", selection: $store.settings.sttDefaults.backend) {
@@ -781,9 +811,9 @@ struct SettingsScreen: View {
                 Toggle("Include timestamps", isOn: $store.settings.sttDefaults.includeTimestamps)
                 Toggle("Use VAD", isOn: $store.settings.sttDefaults.useVAD)
             }
-            Section("Python mlx-audio 0.4.1") {
+            Section("Python mlx-audio 0.4.2") {
                 TextField("Repo path", text: $store.settings.pythonMLXRepoPath)
-                Text("Point this to your cloned Python mlx-audio repo for Canary, Moonshine, MMS, Granite, SenseVoice, FireRedASR2, Fish Audio, DeepFilterNet, and OGG/Opus/Vorbis workflows.")
+                Text("Point this to your cloned Python mlx-audio repo for Whisper, Cohere, Canary, Moonshine, MMS, Granite, SenseVoice, FireRedASR2, Fish Audio, Irodori, KugelAudio, Voxtral TTS, HumeAI Tada, DeepFilterNet, and OGG/Opus/Vorbis workflows.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
@@ -855,6 +885,42 @@ private func availableSystemVoices() -> [VoiceOption] {
         return VoiceOption(id: id.rawValue, label: label)
     }
     .sorted { $0.label < $1.label }
+}
+
+@ViewBuilder
+private func presetDetailsView(for preset: ModelPreset?) -> some View {
+    if let preset {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(preset.summary)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !preset.languageCodes.isEmpty {
+                Text("Languages: \(preset.languageCodes.map(languageLabel(for:)).joined(separator: ", "))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            let badges = SpeechCatalog.capabilityBadges(for: preset)
+            if !badges.isEmpty {
+                Text("Capabilities: \(badges.joined(separator: " • "))")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+            if SpeechCatalog.supportsAudioUnderstanding(preset.id) {
+                Text("This model also supports richer audio understanding upstream; the app currently uses it in transcription mode.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+private func presetMenuLabel(_ preset: ModelPreset) -> String {
+    "\(preset.title) — \(preset.summary)"
+}
+
+private func languageLabel(for code: String) -> String {
+    SpeechCatalog.languages.first(where: { $0.code == code })?.label ?? code.uppercased()
 }
 
 private func resolveDefaultVoice(for modelID: String, settings: AppSettings) -> String {
