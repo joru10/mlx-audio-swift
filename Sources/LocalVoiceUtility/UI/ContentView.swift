@@ -75,15 +75,6 @@ struct HomeScreen: View {
             }
         }
         .padding(24)
-        .onAppear {
-            if store.selectedScaleCaptureID == nil, let first = store.scaleCaptures.first {
-                store.loadScaleCapturePreview(first)
-            }
-        }
-        .onChange(of: store.selectedScaleCaptureID) { _, newValue in
-            guard let newValue, let capture = store.scaleCaptures.first(where: { $0.id == newValue }) else { return }
-            store.loadScaleCapturePreview(capture)
-        }
     }
 
     @ViewBuilder
@@ -203,6 +194,15 @@ struct ScaleCaptureScreen: View {
             }
         }
         .padding(24)
+        .onAppear {
+            if store.selectedScaleCaptureID == nil, let first = store.scaleCaptures.first {
+                store.loadScaleCapturePreview(first)
+            }
+        }
+        .onChange(of: store.selectedScaleCaptureID) { _, newValue in
+            guard let newValue, let capture = store.scaleCaptures.first(where: { $0.id == newValue }) else { return }
+            store.loadScaleCapturePreview(capture)
+        }
     }
 
     private var selectedCapture: ScaleCaptureRecord? {
