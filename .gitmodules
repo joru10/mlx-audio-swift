@@ -1,3 +1,6 @@
 [submodule "Vendor/mlx-audio"]
 	path = Vendor/mlx-audio
 	url = https://github.com/Blaizzy/mlx-audio.git
+[submodule "Vendor/mlx-vlm"]
+	path = Vendor/mlx-vlm
+	url = https://github.com/Blaizzy/mlx-vlm.git
