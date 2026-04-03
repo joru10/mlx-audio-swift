@@ -31,6 +31,8 @@ struct ContentView: View {
         switch store.selectedScreen {
         case .home:
             HomeScreen()
+        case .visual:
+            VisualAnalysisScreen()
         case .pdf:
             PDFToAudioScreen()
         case .url:
@@ -57,6 +59,7 @@ struct HomeScreen: View {
             Text("Quick Actions")
                 .font(.title2.bold())
             HStack {
+                quickTile(title: "Analyze Image/PDF", action: { store.selectedScreen = .visual })
                 quickTile(title: "Read a PDF", action: { store.selectedScreen = .pdf })
                 quickTile(title: "Read a Web Page", action: { store.selectedScreen = .url })
                 quickTile(title: "Transcribe Audio/Video", action: { store.selectedScreen = .transcribe })
@@ -81,6 +84,147 @@ struct HomeScreen: View {
                 .frame(maxWidth: .infinity, minHeight: 80)
         }
         .buttonStyle(.borderedProminent)
+    }
+}
+
+private struct VisualPreset: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let summary: String
+}
+
+private let visualPresets: [VisualPreset] = [
+    .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding"),
+    .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model"),
+    .init(id: "mlx-community/granite-vision-3.2-2b-4bit", title: "Granite Vision 3.2", summary: "Compact document and image reasoning"),
+    .init(id: "mlx-community/granite-4.0-vision-2b-4bit", title: "Granite 4.0 Vision", summary: "Updated vision reasoning"),
+    .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction"),
+    .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading"),
+]
+
+struct VisualAnalysisScreen: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var selectedInput: URL?
+    @State private var modelID = VisualAnalysisOptions().modelId
+    @State private var prompt = VisualAnalysisOptions().prompt
+    @State private var maxTokens = "300"
+    @State private var isRunning = false
+    @State private var resultText = ""
+    @State private var outputPath: String?
+    @State private var renderedInputPath: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Visual Analysis")
+                .font(.title2.bold())
+            Text("Analyze an image or the first page of a PDF using the local `mlx-vlm` environment.")
+                .foregroundStyle(.secondary)
+
+            Form {
+                Section("Input") {
+                    Text(selectedInput?.path ?? "No file selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Select Image or PDF") {
+                            pickVisualInput()
+                        }
+                        if let selectedInput {
+                            Button("Reveal Input") {
+                                NSWorkspace.shared.activateFileViewerSelecting([selectedInput])
+                            }
+                        }
+                    }
+                }
+
+                Section("Model") {
+                    Picker("Preset", selection: $modelID) {
+                        ForEach(visualPresets) { preset in
+                            Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                        }
+                    }
+                    TextField("Model ID", text: $modelID)
+                    TextField("Prompt", text: $prompt, axis: .vertical)
+                        .lineLimit(4, reservesSpace: true)
+                    TextField("Max tokens", text: $maxTokens)
+                    Text("Repo path: \(store.settings.pythonMLXVLMRepoPath)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(isRunning ? "Analyzing..." : "Run Analysis") {
+                    runAnalysis()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || selectedInput == nil)
+
+                if let outputPath {
+                    Button("Open Result") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: outputPath))
+                    }
+                }
+                if let renderedInputPath {
+                    Button("Reveal Rendered Input") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: renderedInputPath)])
+                    }
+                }
+            }
+
+            Text("Result")
+                .font(.headline)
+            ScrollView {
+                Text(resultText.isEmpty ? "No result yet." : resultText)
+                    .font(.system(.body, design: .default))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(24)
+        .onAppear {
+            modelID = store.settings.visualDefaults.modelId
+            prompt = store.settings.visualDefaults.prompt
+            maxTokens = String(store.settings.visualDefaults.maxTokens)
+            if let latest = store.latestVisualAnalysis {
+                resultText = latest.text
+                outputPath = latest.outputPath
+                renderedInputPath = latest.renderedInputPath
+            }
+        }
+    }
+
+    private func pickVisualInput() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image, .pdf]
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK {
+            selectedInput = panel.url
+        }
+    }
+
+    private func runAnalysis() {
+        guard let selectedInput, let tokenCount = Int(maxTokens.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        isRunning = true
+        Task { @MainActor in
+            do {
+                let result = try await store.runVisualAnalysis(
+                    inputURL: selectedInput,
+                    options: VisualAnalysisOptions(
+                        modelId: modelID,
+                        prompt: prompt,
+                        maxTokens: tokenCount,
+                        pythonRepoPath: store.settings.pythonMLXVLMRepoPath
+                    )
+                )
+                resultText = result.text
+                outputPath = result.outputPath
+                renderedInputPath = result.renderedInputPath
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+            isRunning = false
+        }
     }
 }
 
@@ -814,6 +958,19 @@ struct SettingsScreen: View {
             Section("Python mlx-audio 0.4.2") {
                 TextField("Repo path", text: $store.settings.pythonMLXRepoPath)
                 Text("Point this to your cloned Python mlx-audio repo for Whisper, Cohere, Canary, Moonshine, MMS, Granite, SenseVoice, FireRedASR2, Fish Audio, Irodori, KugelAudio, Voxtral TTS, HumeAI Tada, DeepFilterNet, and OGG/Opus/Vorbis workflows.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Python mlx-vlm 0.4.3") {
+                Picker("Default visual model", selection: $store.settings.visualDefaults.modelId) {
+                    ForEach(visualPresets) { preset in
+                        Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                    }
+                }
+                TextField("Default visual prompt", text: $store.settings.visualDefaults.prompt, axis: .vertical)
+                    .lineLimit(3, reservesSpace: true)
+                TextField("VLM repo path", text: $store.settings.pythonMLXVLMRepoPath)
+                Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -171,6 +171,17 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
         return jobs
     }
 
+    public func runVisualAnalysis(
+        inputURL: URL,
+        options: VisualAnalysisOptions
+    ) async throws -> VisualAnalysisResult {
+        try await PythonMLXVLMBridge.analyze(
+            inputURL: inputURL,
+            options: options,
+            outputDirectory: paths.outputsDirectory
+        )
+    }
+
     private func executePDFJob(
         initialJob: JobRecord,
         inputURL: URL,

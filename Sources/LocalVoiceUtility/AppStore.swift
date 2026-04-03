@@ -6,6 +6,7 @@ import LocalVoiceUtilityKit
 final class AppStore: ObservableObject {
     enum Screen: String, CaseIterable, Hashable {
         case home = "Home"
+        case visual = "Visual Analysis"
         case pdf = "PDF -> Audio"
         case url = "URL -> Audio"
         case transcribe = "Transcribe"
@@ -17,6 +18,7 @@ final class AppStore: ObservableObject {
 
     @Published var selectedScreen: Screen = .home
     @Published var jobs: [JobRecord] = []
+    @Published var latestVisualAnalysis: VisualAnalysisResult?
     @Published var settings: AppSettings
     @Published var latestError: String?
 
@@ -121,10 +123,21 @@ final class AppStore: ObservableObject {
             settings.ttsDefaults.pythonRepoPath = settings.pythonMLXRepoPath
             settings.sttDefaults.languageCode = settings.preferredTranscriptionLanguage
             settings.sttDefaults.pythonRepoPath = settings.pythonMLXRepoPath
+            settings.visualDefaults.pythonRepoPath = settings.pythonMLXVLMRepoPath
             try coordinator.saveSettings(settings)
         } catch {
             latestError = error.localizedDescription
         }
+    }
+
+    func runVisualAnalysis(inputURL: URL, options: VisualAnalysisOptions) async throws -> VisualAnalysisResult {
+        var resolved = options
+        if resolved.pythonRepoPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            resolved.pythonRepoPath = settings.pythonMLXVLMRepoPath
+        }
+        let result = try await coordinator.runVisualAnalysis(inputURL: inputURL, options: resolved)
+        latestVisualAnalysis = result
+        return result
     }
 
     private func upsertJob(_ job: JobRecord) {

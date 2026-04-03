@@ -101,6 +101,8 @@ public struct AppSettings: Codable, Sendable {
     public var preferredReaderLanguage: String
     public var preferredTranscriptionLanguage: String
     public var pythonMLXRepoPath: String
+    public var pythonMLXVLMRepoPath: String
+    public var visualDefaults: VisualAnalysisOptions
 
     public init(
         outputFolderPath: String,
@@ -110,7 +112,9 @@ public struct AppSettings: Codable, Sendable {
         ttsVoiceByModel: [String: String] = [:],
         preferredReaderLanguage: String = "en",
         preferredTranscriptionLanguage: String = "en",
-        pythonMLXRepoPath: String = PythonMLXBridge.defaultRepoPath
+        pythonMLXRepoPath: String = PythonMLXBridge.defaultRepoPath,
+        pythonMLXVLMRepoPath: String = PythonMLXVLMBridge.defaultRepoPath,
+        visualDefaults: VisualAnalysisOptions = VisualAnalysisOptions()
     ) {
         self.outputFolderPath = outputFolderPath
         self.loggingLevel = loggingLevel
@@ -120,6 +124,8 @@ public struct AppSettings: Codable, Sendable {
         self.preferredReaderLanguage = preferredReaderLanguage
         self.preferredTranscriptionLanguage = preferredTranscriptionLanguage
         self.pythonMLXRepoPath = pythonMLXRepoPath
+        self.pythonMLXVLMRepoPath = pythonMLXVLMRepoPath
+        self.visualDefaults = visualDefaults
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -131,6 +137,8 @@ public struct AppSettings: Codable, Sendable {
         case preferredReaderLanguage
         case preferredTranscriptionLanguage
         case pythonMLXRepoPath
+        case pythonMLXVLMRepoPath
+        case visualDefaults
     }
 
     public init(from decoder: Decoder) throws {
@@ -143,6 +151,9 @@ public struct AppSettings: Codable, Sendable {
         preferredReaderLanguage = try c.decodeIfPresent(String.self, forKey: .preferredReaderLanguage) ?? ttsDefaults.languageCode
         preferredTranscriptionLanguage = try c.decodeIfPresent(String.self, forKey: .preferredTranscriptionLanguage) ?? sttDefaults.languageCode
         pythonMLXRepoPath = try c.decodeIfPresent(String.self, forKey: .pythonMLXRepoPath) ?? PythonMLXBridge.defaultRepoPath
+        pythonMLXVLMRepoPath = try c.decodeIfPresent(String.self, forKey: .pythonMLXVLMRepoPath) ?? PythonMLXVLMBridge.defaultRepoPath
+        visualDefaults = try c.decodeIfPresent(VisualAnalysisOptions.self, forKey: .visualDefaults)
+            ?? VisualAnalysisOptions(pythonRepoPath: pythonMLXVLMRepoPath)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -155,5 +166,7 @@ public struct AppSettings: Codable, Sendable {
         try c.encode(preferredReaderLanguage, forKey: .preferredReaderLanguage)
         try c.encode(preferredTranscriptionLanguage, forKey: .preferredTranscriptionLanguage)
         try c.encode(pythonMLXRepoPath, forKey: .pythonMLXRepoPath)
+        try c.encode(pythonMLXVLMRepoPath, forKey: .pythonMLXVLMRepoPath)
+        try c.encode(visualDefaults, forKey: .visualDefaults)
     }
 }
