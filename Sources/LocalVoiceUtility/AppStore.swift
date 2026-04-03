@@ -19,6 +19,7 @@ final class AppStore: ObservableObject {
 
     @Published var selectedScreen: Screen = .home
     @Published var jobs: [JobRecord] = []
+    @Published var actionProfiles: [ActionProfile] = []
     @Published var latestVisualAnalysis: VisualAnalysisResult?
     @Published var latestVisualNarrationPath: String?
     @Published var settings: AppSettings
@@ -38,6 +39,7 @@ final class AppStore: ObservableObject {
     func loadInitialState() async {
         do {
             settings = try coordinator.loadSettings()
+            actionProfiles = try await coordinator.loadActionProfiles()
             _ = try await coordinator.recoverInterruptedJobs()
             jobs = try await coordinator.loadJobs()
         } catch {
@@ -120,16 +122,39 @@ final class AppStore: ObservableObject {
     }
 
     func saveSettings() {
-        do {
-            settings.ttsDefaults.languageCode = settings.preferredReaderLanguage
-            settings.ttsDefaults.pythonRepoPath = settings.pythonMLXRepoPath
-            settings.sttDefaults.languageCode = settings.preferredTranscriptionLanguage
-            settings.sttDefaults.pythonRepoPath = settings.pythonMLXRepoPath
-            settings.visualDefaults.pythonRepoPath = settings.pythonMLXVLMRepoPath
-            try coordinator.saveSettings(settings)
-        } catch {
-            latestError = error.localizedDescription
+        let settingsSnapshot = settings
+        let profilesSnapshot = actionProfiles
+        Task {
+            do {
+                var resolved = settingsSnapshot
+                resolved.ttsDefaults.languageCode = resolved.preferredReaderLanguage
+                resolved.ttsDefaults.pythonRepoPath = resolved.pythonMLXRepoPath
+                resolved.sttDefaults.languageCode = resolved.preferredTranscriptionLanguage
+                resolved.sttDefaults.pythonRepoPath = resolved.pythonMLXRepoPath
+                resolved.visualDefaults.pythonRepoPath = resolved.pythonMLXVLMRepoPath
+                try coordinator.saveSettings(resolved)
+                try await coordinator.saveActionProfiles(profilesSnapshot)
+            } catch {
+                await MainActor.run {
+                    latestError = error.localizedDescription
+                }
+            }
         }
+    }
+
+    func upsertActionProfile(_ profile: ActionProfile) {
+        if let index = actionProfiles.firstIndex(where: { $0.id == profile.id }) {
+            actionProfiles[index] = profile
+        } else {
+            actionProfiles.append(profile)
+        }
+        actionProfiles.sort { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+        saveSettings()
+    }
+
+    func removeActionProfile(id: UUID) {
+        actionProfiles.removeAll { $0.id == id }
+        saveSettings()
     }
 
     func runVisualAnalysis(inputURL: URL, options: VisualAnalysisOptions) async throws -> VisualAnalysisResult {

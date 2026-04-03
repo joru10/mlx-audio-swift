@@ -31,6 +31,14 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
         try JSONStore.save(settings, to: paths.settingsURL)
     }
 
+    public func loadActionProfiles() async throws -> [ActionProfile] {
+        try await actionStore.loadAll()
+    }
+
+    public func saveActionProfiles(_ profiles: [ActionProfile]) async throws {
+        try await actionStore.saveAll(profiles)
+    }
+
     public func enqueuePDFToAudio(
         inputURL: URL,
         options: TTSOptions,

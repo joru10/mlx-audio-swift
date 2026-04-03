@@ -114,7 +114,14 @@ private struct BatchScannedPDFResult: Identifiable, Hashable {
     let id = UUID()
     let pdfPath: String
     let transcriptPath: String
+    let jsonPath: String?
     let audioPath: String
+}
+
+private struct VisualActionProfileDraft {
+    var id: UUID?
+    var name: String = ""
+    var payload: String = ""
 }
 
 private let visualPresets: [VisualPreset] = [
@@ -145,6 +152,7 @@ struct VisualAnalysisScreen: View {
     @State private var resultText = ""
     @State private var outputPath: String?
     @State private var renderedInputPath: String?
+    @State private var jsonPath: String?
     @State private var narrationPath: String?
     @State private var narrationModelID = TTSOptions().modelId
     @State private var narrationLanguageCode = TTSOptions().languageCode
@@ -155,6 +163,8 @@ struct VisualAnalysisScreen: View {
     @State private var selectedWebhookTemplateID = "custom"
     @State private var webhookURL = ""
     @State private var additionalContext = ""
+    @State private var selectedActionProfileID: UUID?
+    @State private var actionProfileDraft = VisualActionProfileDraft()
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -253,6 +263,11 @@ struct VisualAnalysisScreen: View {
                         NSWorkspace.shared.open(URL(fileURLWithPath: outputPath))
                     }
                 }
+                if let jsonPath {
+                    Button("Open JSON") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: jsonPath))
+                    }
+                }
                 if let outputPath {
                     Button("Reveal Result") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: outputPath)])
@@ -320,12 +335,32 @@ struct VisualAnalysisScreen: View {
                         }
                     }
                     if resultAction == .webhook {
+                        Picker("Saved profile", selection: $selectedActionProfileID) {
+                            Text("None").tag(UUID?.none)
+                            ForEach(store.actionProfiles) { profile in
+                                Text(profile.name).tag(UUID?.some(profile.id))
+                            }
+                        }
                         Picker("Webhook template", selection: $selectedWebhookTemplateID) {
                             ForEach(webhookTemplates) { template in
                                 Text(template.title).tag(template.id)
                             }
                         }
                         TextField("Webhook URL", text: $webhookURL)
+                        HStack {
+                            TextField("Profile name", text: $actionProfileDraft.name)
+                            Button("Save Profile") {
+                                saveCurrentActionProfile()
+                            }
+                            .disabled(actionProfileDraft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || webhookURL.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                            if let selectedActionProfileID {
+                                Button("Delete Profile") {
+                                    store.removeActionProfile(id: selectedActionProfileID)
+                                    self.selectedActionProfileID = nil
+                                }
+                                .disabled(store.actionProfiles.first(where: { $0.id == selectedActionProfileID }) == nil)
+                            }
+                        }
                     }
                     HStack {
                         Button("Run Action on Result") {
@@ -354,6 +389,7 @@ struct VisualAnalysisScreen: View {
                 resultText = latest.text
                 outputPath = latest.outputPath
                 renderedInputPath = latest.renderedInputPath
+                jsonPath = latest.jsonPath
             }
             narrationPath = store.latestVisualNarrationPath
         }
@@ -364,6 +400,16 @@ struct VisualAnalysisScreen: View {
             if let template = webhookTemplates.first(where: { $0.id == newValue }), !template.urlTemplate.isEmpty {
                 webhookURL = template.urlTemplate
             }
+        }
+        .onChange(of: selectedActionProfileID) { _, newValue in
+            guard let id = newValue,
+                  let profile = store.actionProfiles.first(where: { $0.id == id }),
+                  let route = profile.routes.first(where: { $0.actionType == "webhook" }) else { return }
+            actionProfileDraft.id = profile.id
+            actionProfileDraft.name = profile.name
+            actionProfileDraft.payload = route.payload
+            webhookURL = route.payload
+            selectedWebhookTemplateID = "custom"
         }
     }
 
@@ -452,6 +498,7 @@ struct VisualAnalysisScreen: View {
                 resultText = result.text
                 outputPath = result.outputPath
                 renderedInputPath = result.renderedInputPath
+                jsonPath = result.jsonPath
             } catch {
                 store.latestError = error.localizedDescription
             }
@@ -577,6 +624,17 @@ struct VisualAnalysisScreen: View {
                 store.latestError = error.localizedDescription
             }
         }
+    }
+
+    private func saveCurrentActionProfile() {
+        let name = actionProfileDraft.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        let payload = webhookURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !name.isEmpty, !payload.isEmpty else { return }
+        let route = ActionRoute(pattern: "visual-analysis", actionType: "webhook", payload: payload)
+        let profile = ActionProfile(id: actionProfileDraft.id ?? UUID(), name: name, confirmationPolicy: .never, routes: [route])
+        store.upsertActionProfile(profile)
+        actionProfileDraft.id = profile.id
+        selectedActionProfileID = profile.id
     }
 }
 
@@ -709,6 +767,11 @@ struct ScannedPDFToAudioScreen: View {
                             Button("OCR Text") {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: result.transcriptPath))
                             }
+                            if let jsonPath = result.jsonPath {
+                                Button("JSON") {
+                                    NSWorkspace.shared.open(URL(fileURLWithPath: jsonPath))
+                                }
+                            }
                             Button("Audio") {
                                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.audioPath)])
                             }
@@ -765,6 +828,7 @@ struct ScannedPDFToAudioScreen: View {
                         BatchScannedPDFResult(
                             pdfPath: input.path,
                             transcriptPath: analysis.outputPath,
+                            jsonPath: analysis.jsonPath,
                             audioPath: generatedAudioPath
                         )
                     )
@@ -1559,6 +1623,16 @@ struct SettingsScreen: View {
                     .lineLimit(3, reservesSpace: true)
                 TextField("VLM repo path", text: $store.settings.pythonMLXVLMRepoPath)
                 Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment. OCR workflows pair best with Falcon OCR and DeepSeek OCR, and all-page PDF processing is intended for scanned documents.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Relay Helpers") {
+                Text("Telegram relay helper: /Users/joru2/Applications/MLXAudio/scripts/telegram_relay.py")
+                    .font(.caption)
+                Button("Reveal Telegram Relay Script") {
+                    NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: "/Users/joru2/Applications/MLXAudio/scripts/telegram_relay.py")])
+                }
+                Text("Run with TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID to use the built-in Telegram webhook preset.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -88,6 +88,7 @@ public struct VisualAnalysisResult: Sendable {
     public let text: String
     public let outputPath: String
     public let renderedInputPath: String
+    public let jsonPath: String?
 }
 
 public enum PythonMLXVLMBridge {
@@ -108,7 +109,9 @@ public enum PythonMLXVLMBridge {
         let repoPath = normalizedRepoPath(options.pythonRepoPath)
         let invocation = try resolvedInvocation(repoPath: repoPath)
         let renderedInputURLs = try renderedInputURLs(for: inputURL, options: options, outputDirectory: outputDirectory)
-        let outputURL = outputDirectory.appendingPathComponent("visual-analysis-\(UUID().uuidString).txt")
+        let stem = "visual-analysis-\(UUID().uuidString)"
+        let outputURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("txt")
+        let jsonURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("json")
 
         var pageOutputs: [String] = []
         for (index, renderedInputURL) in renderedInputURLs.enumerated() {
@@ -129,10 +132,18 @@ public enum PythonMLXVLMBridge {
 
         let combinedOutput = pageOutputs.joined(separator: "\n\n---\n\n")
         try combinedOutput.write(to: outputURL, atomically: true, encoding: .utf8)
+        let jsonPath = try writeStructuredResultJSON(
+            options: options,
+            sourceURL: inputURL,
+            renderedInputURLs: renderedInputURLs,
+            pageOutputs: pageOutputs,
+            outputURL: jsonURL
+        )
         return VisualAnalysisResult(
             text: combinedOutput,
             outputPath: outputURL.path,
-            renderedInputPath: renderedInputURLs.first?.path ?? inputURL.path
+            renderedInputPath: renderedInputURLs.first?.path ?? inputURL.path,
+            jsonPath: jsonPath
         )
     }
 
@@ -339,6 +350,36 @@ private extension PythonMLXVLMBridge {
 #endif
 
 private extension PythonMLXVLMBridge {
+    static func writeStructuredResultJSON(
+        options: VisualAnalysisOptions,
+        sourceURL: URL,
+        renderedInputURLs: [URL],
+        pageOutputs: [String],
+        outputURL: URL
+    ) throws -> String? {
+        let pageObjects = pageOutputs.enumerated().map { index, text in
+            [
+                "page": index + 1,
+                "renderedInputPath": renderedInputURLs[safe: index]?.path ?? renderedInputURLs.first?.path ?? sourceURL.path,
+                "text": text,
+            ] as [String: Any]
+        }
+
+        let payload: [String: Any] = [
+            "sourcePath": sourceURL.path,
+            "workflow": options.workflow.rawValue,
+            "modelId": options.modelId,
+            "createdAt": ISO8601DateFormatter().string(from: Date()),
+            "pageCount": renderedInputURLs.count,
+            "fullText": pageOutputs.joined(separator: "\n\n"),
+            "pages": pageObjects,
+        ]
+
+        let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
+        try data.write(to: outputURL, options: .atomic)
+        return outputURL.path
+    }
+
     static func frontmostWindowID() -> Int? {
         #if canImport(AppKit)
         guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
@@ -368,5 +409,11 @@ private extension PythonMLXVLMBridge {
         #else
         return nil
         #endif
+    }
+}
+
+private extension Array {
+    subscript(safe index: Int) -> Element? {
+        indices.contains(index) ? self[index] : nil
     }
 }
