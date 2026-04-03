@@ -58,6 +58,46 @@ struct ContentView: View {
     }
 }
 
+
+private struct ScreenScrollView<Content: View>: View {
+    let maxWidth: CGFloat
+    @ViewBuilder let content: () -> Content
+
+    init(maxWidth: CGFloat = 980, @ViewBuilder content: @escaping () -> Content) {
+        self.maxWidth = maxWidth
+        self.content = content
+    }
+
+    var body: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 18) {
+                content()
+            }
+            .frame(maxWidth: maxWidth, alignment: .topLeading)
+            .padding(24)
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+}
+
+private struct ScreenSection<Content: View>: View {
+    let title: String
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        GroupBox {
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        } label: {
+            Text(title)
+                .font(.headline)
+        }
+    }
+}
+
 private struct AdaptiveButtonRow<Content: View>: View {
     @ViewBuilder let content: () -> Content
 
@@ -1137,8 +1177,10 @@ struct PDFToAudioScreen: View {
     @State private var previewSynth: NSSpeechSynthesizer?
 
     var body: some View {
-        Form {
-            Section("Input") {
+        ScreenScrollView {
+            Text("PDF to Audio")
+                .font(.title2.bold())
+            ScreenSection(title: "Input") {
                 Text(selectedPDF?.path ?? "No file selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1146,7 +1188,7 @@ struct PDFToAudioScreen: View {
                     pickPDF()
                 }
             }
-            Section("Generation") {
+            ScreenSection(title: "Generation") {
                 Picker("Preset", selection: $modelID) {
                     ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
                         Text(presetMenuLabel(preset)).tag(preset.id)
@@ -1176,7 +1218,7 @@ struct PDFToAudioScreen: View {
                         Text(voice.label).tag(voice.id)
                     }
                 }
-                HStack {
+                AdaptiveButtonRow {
                     Button("Preview Voice") {
                         previewSelectedVoice()
                     }
@@ -1205,7 +1247,6 @@ struct PDFToAudioScreen: View {
             .buttonStyle(.borderedProminent)
             .disabled(selectedPDF == nil)
         }
-        .padding(24)
         .onAppear {
             systemVoices = availableSystemVoices()
             selectedVoiceIdentifier = resolveDefaultVoice(for: modelID, settings: store.settings)
@@ -1261,15 +1302,16 @@ struct URLToAudioScreen: View {
     @State private var previewSynth: NSSpeechSynthesizer?
 
     var body: some View {
-        Form {
-            Section("URL") {
+        ScreenScrollView {
+            Text("URL to Audio")
+                .font(.title2.bold())
+            ScreenSection(title: "URL") {
                 TextField("https://example.com/article", text: $urlString)
-                HStack {
+                AdaptiveButtonRow {
                     Button(isFetching ? "Fetching..." : "Fetch Preview") {
                         fetchPreview()
                     }
                     .disabled(isFetching || urlString.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
-                    Spacer()
                     Button("Open in Browser") {
                         guard let url = URL(string: urlString) else { return }
                         NSWorkspace.shared.open(url)
@@ -1278,7 +1320,7 @@ struct URLToAudioScreen: View {
                 }
             }
 
-            Section("Generation") {
+            ScreenSection(title: "Generation") {
                 Picker("Preset", selection: $modelID) {
                     ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
                         Text(presetMenuLabel(preset)).tag(preset.id)
@@ -1309,7 +1351,7 @@ struct URLToAudioScreen: View {
                 .disabled(systemVoices.isEmpty)
             }
 
-            Section("Extracted preview") {
+            ScreenSection(title: "Extracted preview") {
                 ScrollView {
                     Text(extractedPreview.isEmpty ? "No preview yet." : extractedPreview)
                         .font(.caption)
@@ -1337,7 +1379,6 @@ struct URLToAudioScreen: View {
             .buttonStyle(.borderedProminent)
             .disabled(URL(string: urlString.trimmingCharacters(in: .whitespacesAndNewlines)) == nil)
         }
-        .padding(24)
         .onAppear {
             systemVoices = availableSystemVoices()
             selectedVoiceIdentifier = resolveDefaultVoice(for: modelID, settings: store.settings)
@@ -1398,8 +1439,10 @@ struct TranscribeScreen: View {
     @State private var enhancementMode: SpeechEnhancementMode = .off
 
     var body: some View {
-        Form {
-            Section("Input") {
+        ScreenScrollView {
+            Text("Transcribe")
+                .font(.title2.bold())
+            ScreenSection(title: "Input") {
                 Text(selectedMedia?.path ?? "No file selected")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1407,7 +1450,7 @@ struct TranscribeScreen: View {
                     pickMedia()
                 }
             }
-            Section("Transcription") {
+            ScreenSection(title: "Transcription") {
                 Picker("Preset", selection: $modelID) {
                     ForEach(SpeechCatalog.sttModels(for: .fileTranscription)) { preset in
                         Text(presetMenuLabel(preset)).tag(preset.id)
@@ -1452,7 +1495,6 @@ struct TranscribeScreen: View {
             .buttonStyle(.borderedProminent)
             .disabled(selectedMedia == nil)
         }
-        .padding(24)
         .onAppear {
             languageCode = store.settings.preferredTranscriptionLanguage
             backend = store.settings.sttDefaults.backend
@@ -1489,10 +1531,11 @@ struct LivePlaceholderScreen: View {
     @State private var selectedWebhookTemplateID: UUID?
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        ScreenScrollView(maxWidth: 1080) {
             Text("Live Voice")
                 .font(.title2.bold())
 
+            ScreenSection(title: "Input") {
             AdaptiveButtonRow {
                 Picker("Input", selection: $manager.selectedInputDeviceID) {
                     ForEach(manager.availableInputDevices) { device in
@@ -1505,64 +1548,70 @@ struct LivePlaceholderScreen: View {
                     manager.refreshInputDevices()
                 }
             }
-
-            Picker("Live preset", selection: $manager.modelID) {
-                ForEach(SpeechCatalog.sttModels(for: .liveTranscription)) { preset in
-                    Text(presetMenuLabel(preset)).tag(preset.id)
-                }
             }
 
-            TextField("STT model", text: $manager.modelID)
-                .textFieldStyle(.roundedBorder)
-
-            AdaptiveButtonRow {
-                Picker("Backend", selection: $manager.backend) {
-                    ForEach(InferenceBackend.allCases, id: \.self) { option in
-                        Text(option.rawValue).tag(option)
+            ScreenSection(title: "Recognition") {
+                Picker("Live preset", selection: $manager.modelID) {
+                    ForEach(SpeechCatalog.sttModels(for: .liveTranscription)) { preset in
+                        Text(presetMenuLabel(preset)).tag(preset.id)
                     }
                 }
-                .frame(maxWidth: 220)
 
-                Picker("Enhancement", selection: $manager.enhancementMode) {
-                    ForEach(SpeechEnhancementMode.allCases, id: \.self) { mode in
-                        Text(mode.displayName).tag(mode)
+                TextField("STT model", text: $manager.modelID)
+                    .textFieldStyle(.roundedBorder)
+
+                AdaptiveButtonRow {
+                    Picker("Backend", selection: $manager.backend) {
+                        ForEach(InferenceBackend.allCases, id: \.self) { option in
+                            Text(option.rawValue).tag(option)
+                        }
                     }
-                }
-                .frame(maxWidth: 220)
-            }
+                    .frame(maxWidth: 220)
 
-            Picker("Live language", selection: $manager.languageCode) {
-                ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: manager.modelID), allowAutoDetect: true)) { language in
-                    Text(language.label).tag(language.code)
+                    Picker("Enhancement", selection: $manager.enhancementMode) {
+                        ForEach(SpeechEnhancementMode.allCases, id: \.self) { mode in
+                            Text(mode.displayName).tag(mode)
+                        }
+                    }
+                    .frame(maxWidth: 220)
                 }
-            }
-            .frame(maxWidth: 260)
-            presetDetailsView(for: SpeechCatalog.preset(for: manager.modelID))
 
-            AdaptiveButtonRow {
-                Picker("Action", selection: $manager.actionMode) {
-                    ForEach(LiveActionMode.allCases, id: \.self) { mode in
-                        Text(mode.rawValue).tag(mode)
+                Picker("Live language", selection: $manager.languageCode) {
+                    ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: manager.modelID), allowAutoDetect: true)) { language in
+                        Text(language.label).tag(language.code)
                     }
                 }
                 .frame(maxWidth: 260)
+                presetDetailsView(for: SpeechCatalog.preset(for: manager.modelID))
+            }
 
-                if manager.actionMode == .shell {
-                    TextField("Shell template (use {{text}})", text: $manager.shellTemplate)
-                } else if manager.actionMode == .webhook {
-                    VStack(alignment: .leading, spacing: 8) {
-                        Picker("Webhook template", selection: $selectedWebhookTemplateID) {
-                            Text("Custom").tag(UUID?.none)
-                            ForEach(store.settings.savedWebhookTemplates) { template in
-                                Text(template.name).tag(UUID?.some(template.id))
-                            }
+            ScreenSection(title: "Actions") {
+                AdaptiveButtonRow {
+                    Picker("Action", selection: $manager.actionMode) {
+                        ForEach(LiveActionMode.allCases, id: \.self) { mode in
+                            Text(mode.rawValue).tag(mode)
                         }
-                        TextField("Webhook URL", text: $manager.webhookURL)
+                    }
+                    .frame(maxWidth: 260)
+
+                    if manager.actionMode == .shell {
+                        TextField("Shell template (use {{text}})", text: $manager.shellTemplate)
+                    } else if manager.actionMode == .webhook {
+                        VStack(alignment: .leading, spacing: 8) {
+                            Picker("Webhook template", selection: $selectedWebhookTemplateID) {
+                                Text("Custom").tag(UUID?.none)
+                                ForEach(store.settings.savedWebhookTemplates) { template in
+                                    Text(template.name).tag(UUID?.some(template.id))
+                                }
+                            }
+                            TextField("Webhook URL", text: $manager.webhookURL)
+                        }
                     }
                 }
             }
 
-            HStack(spacing: 12) {
+            ScreenSection(title: "Session") {
+            AdaptiveButtonRow {
                 Button(manager.isRunning ? "Stop Live Transcript" : "Start Live Transcript") {
                     if manager.isRunning {
                         manager.stop()
@@ -1578,25 +1627,26 @@ struct LivePlaceholderScreen: View {
             Text("Engine: \(manager.runtimeModeDescription)")
                 .font(.caption)
                 .foregroundStyle(.secondary)
-
-            Text("Transcript")
-                .font(.headline)
-            if !manager.livePartialText.isEmpty {
-                Text(manager.livePartialText)
-                    .foregroundStyle(.secondary)
-                    .italic()
-                    .frame(maxWidth: .infinity, alignment: .leading)
             }
-            ScrollView {
-                VStack(alignment: .leading, spacing: 8) {
-                    ForEach(Array(manager.transcriptLines.enumerated()), id: \.offset) { _, line in
-                        Text(line)
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .padding(.vertical, 2)
+
+            ScreenSection(title: "Transcript") {
+                if !manager.livePartialText.isEmpty {
+                    Text(manager.livePartialText)
+                        .foregroundStyle(.secondary)
+                        .italic()
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 8) {
+                        ForEach(Array(manager.transcriptLines.enumerated()), id: \.offset) { _, line in
+                            Text(line)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .padding(.vertical, 2)
+                        }
                     }
                 }
+                .frame(minHeight: 220, maxHeight: 420)
             }
-            .frame(maxHeight: .infinity)
 
             if let error = manager.latestError, !error.isEmpty {
                 Text(error)
@@ -1608,7 +1658,6 @@ struct LivePlaceholderScreen: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
         }
-        .padding(24)
         .onAppear {
             manager.languageCode = store.settings.preferredTranscriptionLanguage
             manager.backend = store.settings.sttDefaults.backend
@@ -1745,12 +1794,12 @@ struct LibraryScreen: View {
 
 struct ModelsScreen: View {
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        ScreenScrollView {
             Text("Models")
                 .font(.title2.bold())
             Text("Preset catalog for mlx-audio Swift + Python backends.")
                 .foregroundStyle(.secondary)
-            GroupBox("TTS presets") {
+            ScreenSection(title: "TTS presets") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(SpeechCatalog.ttsPresets) { preset in
                         VStack(alignment: .leading, spacing: 2) {
@@ -1763,7 +1812,7 @@ struct ModelsScreen: View {
                     }
                 }
             }
-            GroupBox("STT presets") {
+            ScreenSection(title: "STT presets") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(SpeechCatalog.sttPresets) { preset in
                         VStack(alignment: .leading, spacing: 2) {
@@ -1777,7 +1826,6 @@ struct ModelsScreen: View {
                 }
             }
         }
-        .padding(24)
     }
 }
 
@@ -1791,12 +1839,16 @@ struct SettingsScreen: View {
     @State private var webhookTemplateDraft = SavedWebhookTemplateDraft()
 
     var body: some View {
-        Form {
-            Section("Defaults") {
+        ScreenScrollView {
+            Text("Settings")
+                .font(.title2.bold())
+            Text("Application defaults, local backends, relay integration, and reusable templates.")
+                .foregroundStyle(.secondary)
+            ScreenSection(title: "Defaults") {
                 TextField("Output folder", text: $store.settings.outputFolderPath)
                 TextField("Logging level", text: $store.settings.loggingLevel)
             }
-            Section("TTS") {
+            ScreenSection(title: "TTS") {
                 Picker("Default TTS preset", selection: $store.settings.ttsDefaults.modelId) {
                     ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
                         Text(presetMenuLabel(preset)).tag(preset.id)
@@ -1814,7 +1866,7 @@ struct SettingsScreen: View {
                 }
                 TextField("Output format", text: $store.settings.ttsDefaults.outputFormat)
             }
-            Section("Reader Voice") {
+            ScreenSection(title: "Reader Voice") {
                 Text("Choose voice and map it per model.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1850,7 +1902,7 @@ struct SettingsScreen: View {
                     }
                 }
             }
-            Section("STT") {
+            ScreenSection(title: "STT") {
                 Picker("Default STT preset", selection: $store.settings.sttDefaults.modelId) {
                     ForEach(SpeechCatalog.sttModels(for: .fileTranscription)) { preset in
                         Text(presetMenuLabel(preset)).tag(preset.id)
@@ -1874,13 +1926,13 @@ struct SettingsScreen: View {
                 Toggle("Include timestamps", isOn: $store.settings.sttDefaults.includeTimestamps)
                 Toggle("Use VAD", isOn: $store.settings.sttDefaults.useVAD)
             }
-            Section("Python mlx-audio 0.4.2") {
+            ScreenSection(title: "Python mlx-audio 0.4.2") {
                 TextField("Repo path", text: $store.settings.pythonMLXRepoPath)
                 Text("Point this to your cloned Python mlx-audio repo for Whisper, Cohere, Canary, Moonshine, MMS, Granite, SenseVoice, FireRedASR2, Fish Audio, Irodori, KugelAudio, Voxtral TTS, HumeAI Tada, DeepFilterNet, and OGG/Opus/Vorbis workflows.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Python mlx-vlm 0.4.3") {
+            ScreenSection(title: "Python mlx-vlm 0.4.3") {
                 Picker("Default workflow", selection: $store.settings.visualDefaults.workflow) {
                     ForEach(VisualAnalysisWorkflow.allCases, id: \.self) { workflow in
                         Text(workflow.displayName).tag(workflow)
@@ -1912,7 +1964,7 @@ struct SettingsScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Webhook Templates") {
+            ScreenSection(title: "Webhook Templates") {
                 Text("These templates are shared by Visual Analysis and Live webhook actions.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -1953,7 +2005,7 @@ struct SettingsScreen: View {
                     }
                 }
             }
-            Section("Telegram Relay") {
+            ScreenSection(title: "Telegram Relay") {
                 SecureField("Bot token", text: $store.settings.telegramRelay.botToken)
                 TextField("Chat ID", text: $store.settings.telegramRelay.chatID)
                 TextField("Host", text: $store.settings.telegramRelay.host)
@@ -1979,7 +2031,7 @@ struct SettingsScreen: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
-            Section("Relay Helpers") {
+            ScreenSection(title: "Relay Helpers") {
                 Text("Telegram relay helper: /Users/joru2/Applications/MLXAudio/scripts/telegram_relay.py")
                     .font(.caption)
                 Button("Reveal Telegram Relay Script") {
@@ -1994,7 +2046,6 @@ struct SettingsScreen: View {
             }
             .buttonStyle(.borderedProminent)
         }
-        .padding(24)
         .onAppear {
             loadSystemVoices()
             modelVoiceTarget = store.settings.ttsDefaults.modelId
