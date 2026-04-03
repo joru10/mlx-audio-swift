@@ -5,6 +5,9 @@ public enum VisualAnalysisWorkflow: String, Codable, CaseIterable, Sendable {
     case general
     case ocrPlainText
     case ocrStructured
+    case ocrReceipt
+    case ocrForm
+    case ocrTable
     case screenSummary
 
     public var displayName: String {
@@ -12,6 +15,9 @@ public enum VisualAnalysisWorkflow: String, Codable, CaseIterable, Sendable {
         case .general: return "General"
         case .ocrPlainText: return "OCR Plain Text"
         case .ocrStructured: return "OCR Structured"
+        case .ocrReceipt: return "Receipt OCR"
+        case .ocrForm: return "Form OCR"
+        case .ocrTable: return "Table OCR"
         case .screenSummary: return "Screen Summary"
         }
     }
@@ -24,6 +30,12 @@ public enum VisualAnalysisWorkflow: String, Codable, CaseIterable, Sendable {
             return "Extract the visible text exactly as written. Preserve paragraphs and line breaks where possible."
         case .ocrStructured:
             return "Extract the visible text and return a structured summary with headings, key fields, tables, and notable values."
+        case .ocrReceipt:
+            return "Extract this receipt into merchant, date, line items, subtotal, taxes, total, payment method, and any loyalty or invoice identifiers."
+        case .ocrForm:
+            return "Extract this form into field names and values, keeping sections, checkbox states, signatures, dates, and any missing fields."
+        case .ocrTable:
+            return "Extract the table structure with headers, rows, totals, and any footnotes. Keep the row and column meaning explicit."
         case .screenSummary:
             return "Summarize what is on this screen, the main UI sections, important text, and the likely next actions for the user."
         }
@@ -358,14 +370,19 @@ private extension PythonMLXVLMBridge {
         outputURL: URL
     ) throws -> String? {
         let pageObjects = pageOutputs.enumerated().map { index, text in
-            [
+            var pageObject: [String: Any] = [
                 "page": index + 1,
                 "renderedInputPath": renderedInputURLs[safe: index]?.path ?? renderedInputURLs.first?.path ?? sourceURL.path,
                 "text": text,
-            ] as [String: Any]
+            ]
+            let structured = structuredPayload(for: options.workflow, text: text)
+            if !structured.isEmpty {
+                pageObject["structured"] = structured
+            }
+            return pageObject
         }
 
-        let payload: [String: Any] = [
+        var payload: [String: Any] = [
             "sourcePath": sourceURL.path,
             "workflow": options.workflow.rawValue,
             "modelId": options.modelId,
@@ -374,10 +391,127 @@ private extension PythonMLXVLMBridge {
             "fullText": pageOutputs.joined(separator: "\n\n"),
             "pages": pageObjects,
         ]
+        let structured = structuredPayload(for: options.workflow, text: pageOutputs.joined(separator: "\n\n"))
+        if !structured.isEmpty {
+            payload["structured"] = structured
+        }
 
         let data = try JSONSerialization.data(withJSONObject: payload, options: [.prettyPrinted, .sortedKeys])
         try data.write(to: outputURL, options: .atomic)
         return outputURL.path
+    }
+
+    static func structuredPayload(for workflow: VisualAnalysisWorkflow, text: String) -> [String: Any] {
+        let normalizedText = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let lines = normalizedText
+            .components(separatedBy: .newlines)
+            .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+        let fields = colonSeparatedFields(in: lines)
+        let amounts = detectedAmounts(in: normalizedText)
+
+        switch workflow {
+        case .general, .ocrPlainText, .screenSummary:
+            return [:]
+        case .ocrStructured:
+            return [
+                "schema": "structured_document_v1",
+                "fields": fields,
+                "tables": detectedTables(in: lines),
+                "amounts": amounts,
+            ]
+        case .ocrReceipt:
+            return [
+                "schema": "receipt_v1",
+                "merchant": lines.first ?? "",
+                "fields": fields,
+                "amounts": amounts,
+                "total": inferredTotal(from: lines, amounts: amounts),
+            ]
+        case .ocrForm:
+            return [
+                "schema": "form_v1",
+                "fields": fields,
+                "checkedLines": lines.filter { $0.localizedCaseInsensitiveContains("[x]") || $0.localizedCaseInsensitiveContains("checked") },
+                "signatureLines": lines.filter { $0.localizedCaseInsensitiveContains("signature") },
+            ]
+        case .ocrTable:
+            let rows = detectedTables(in: lines)
+            return [
+                "schema": "table_v1",
+                "rows": rows,
+                "columnCount": rows.map(\.count).max() ?? 0,
+            ]
+        }
+    }
+
+    static func colonSeparatedFields(in lines: [String]) -> [String: String] {
+        var fields: [String: String] = [:]
+        for line in lines {
+            let separators = [":", "\t", " - "]
+            guard let separator = separators.first(where: { line.contains($0) }) else { continue }
+            let parts = line.components(separatedBy: separator).map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            guard parts.count >= 2, !parts[0].isEmpty else { continue }
+            fields[parts[0]] = parts.dropFirst().joined(separator: " ")
+        }
+        return fields
+    }
+
+    static func detectedAmounts(in text: String) -> [String] {
+        let pattern = #"(?:(?:USD|EUR|GBP|CHF)\s*)?[$€£]?\d+(?:[.,]\d{2})"#
+        guard let regex = try? NSRegularExpression(pattern: pattern) else { return [] }
+        let range = NSRange(text.startIndex..<text.endIndex, in: text)
+        return regex.matches(in: text, range: range).compactMap {
+            Range($0.range, in: text).map { String(text[$0]) }
+        }
+    }
+
+    static func inferredTotal(from lines: [String], amounts: [String]) -> String {
+        if let line = lines.first(where: { $0.localizedCaseInsensitiveContains("total") }) {
+            return line
+        }
+        return amounts.last ?? ""
+    }
+
+    static func detectedTables(in lines: [String]) -> [[String]] {
+        lines.compactMap { line in
+            let pipeParts = line
+                .split(separator: "|")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if pipeParts.count > 1 {
+                return pipeParts
+            }
+
+            let tabParts = line
+                .split(separator: "\t")
+                .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                .filter { !$0.isEmpty }
+            if tabParts.count > 1 {
+                return tabParts
+            }
+
+            let regex = try? NSRegularExpression(pattern: #"\s{2,}"#)
+            let range = NSRange(line.startIndex..<line.endIndex, in: line)
+            let splitPoints = regex?.matches(in: line, range: range) ?? []
+            guard !splitPoints.isEmpty else { return nil }
+
+            var columns: [String] = []
+            var currentIndex = line.startIndex
+            for match in splitPoints {
+                guard let matchRange = Range(match.range, in: line) else { continue }
+                let value = String(line[currentIndex..<matchRange.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+                if !value.isEmpty {
+                    columns.append(value)
+                }
+                currentIndex = matchRange.upperBound
+            }
+            let tail = String(line[currentIndex...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            if !tail.isEmpty {
+                columns.append(tail)
+            }
+            return columns.count > 1 ? columns : nil
+        }
     }
 
     static func frontmostWindowID() -> Int? {

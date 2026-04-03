@@ -92,6 +92,45 @@ public struct STTOptions: Codable, Sendable {
     }
 }
 
+public struct SavedWebhookTemplate: Codable, Sendable, Identifiable, Hashable {
+    public var id: UUID
+    public var name: String
+    public var url: String
+
+    public init(id: UUID = UUID(), name: String, url: String) {
+        self.id = id
+        self.name = name
+        self.url = url
+    }
+}
+
+public struct TelegramRelaySettings: Codable, Sendable, Hashable {
+    public var botToken: String
+    public var chatID: String
+    public var host: String
+    public var port: Int
+
+    public init(
+        botToken: String = "",
+        chatID: String = "",
+        host: String = "127.0.0.1",
+        port: Int = 8787
+    ) {
+        self.botToken = botToken
+        self.chatID = chatID
+        self.host = host
+        self.port = port
+    }
+
+    public var telegramMessageURL: String {
+        "http://\(host):\(port)/telegram/message"
+    }
+
+    public var genericWebhookURL: String {
+        "http://\(host):\(port)/live"
+    }
+}
+
 public struct AppSettings: Codable, Sendable {
     public var outputFolderPath: String
     public var loggingLevel: String
@@ -103,6 +142,8 @@ public struct AppSettings: Codable, Sendable {
     public var pythonMLXRepoPath: String
     public var pythonMLXVLMRepoPath: String
     public var visualDefaults: VisualAnalysisOptions
+    public var savedWebhookTemplates: [SavedWebhookTemplate]
+    public var telegramRelay: TelegramRelaySettings
 
     public init(
         outputFolderPath: String,
@@ -114,7 +155,9 @@ public struct AppSettings: Codable, Sendable {
         preferredTranscriptionLanguage: String = "en",
         pythonMLXRepoPath: String = PythonMLXBridge.defaultRepoPath,
         pythonMLXVLMRepoPath: String = PythonMLXVLMBridge.defaultRepoPath,
-        visualDefaults: VisualAnalysisOptions = VisualAnalysisOptions()
+        visualDefaults: VisualAnalysisOptions = VisualAnalysisOptions(),
+        savedWebhookTemplates: [SavedWebhookTemplate] = AppSettings.defaultWebhookTemplates(),
+        telegramRelay: TelegramRelaySettings = TelegramRelaySettings()
     ) {
         self.outputFolderPath = outputFolderPath
         self.loggingLevel = loggingLevel
@@ -126,6 +169,8 @@ public struct AppSettings: Codable, Sendable {
         self.pythonMLXRepoPath = pythonMLXRepoPath
         self.pythonMLXVLMRepoPath = pythonMLXVLMRepoPath
         self.visualDefaults = visualDefaults
+        self.savedWebhookTemplates = savedWebhookTemplates
+        self.telegramRelay = telegramRelay
     }
 
     private enum CodingKeys: String, CodingKey {
@@ -139,6 +184,8 @@ public struct AppSettings: Codable, Sendable {
         case pythonMLXRepoPath
         case pythonMLXVLMRepoPath
         case visualDefaults
+        case savedWebhookTemplates
+        case telegramRelay
     }
 
     public init(from decoder: Decoder) throws {
@@ -154,6 +201,9 @@ public struct AppSettings: Codable, Sendable {
         pythonMLXVLMRepoPath = try c.decodeIfPresent(String.self, forKey: .pythonMLXVLMRepoPath) ?? PythonMLXVLMBridge.defaultRepoPath
         visualDefaults = try c.decodeIfPresent(VisualAnalysisOptions.self, forKey: .visualDefaults)
             ?? VisualAnalysisOptions(pythonRepoPath: pythonMLXVLMRepoPath)
+        telegramRelay = try c.decodeIfPresent(TelegramRelaySettings.self, forKey: .telegramRelay) ?? TelegramRelaySettings()
+        savedWebhookTemplates = try c.decodeIfPresent([SavedWebhookTemplate].self, forKey: .savedWebhookTemplates)
+            ?? AppSettings.defaultWebhookTemplates(relay: telegramRelay)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -168,5 +218,14 @@ public struct AppSettings: Codable, Sendable {
         try c.encode(pythonMLXRepoPath, forKey: .pythonMLXRepoPath)
         try c.encode(pythonMLXVLMRepoPath, forKey: .pythonMLXVLMRepoPath)
         try c.encode(visualDefaults, forKey: .visualDefaults)
+        try c.encode(savedWebhookTemplates, forKey: .savedWebhookTemplates)
+        try c.encode(telegramRelay, forKey: .telegramRelay)
+    }
+
+    public static func defaultWebhookTemplates(relay: TelegramRelaySettings = TelegramRelaySettings()) -> [SavedWebhookTemplate] {
+        [
+            SavedWebhookTemplate(name: "Telegram relay (local)", url: relay.telegramMessageURL),
+            SavedWebhookTemplate(name: "Generic local webhook", url: relay.genericWebhookURL),
+        ]
     }
 }

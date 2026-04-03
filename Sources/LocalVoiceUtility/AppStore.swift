@@ -1,6 +1,7 @@
 import Foundation
 import SwiftUI
 import LocalVoiceUtilityKit
+import AppKit
 
 @MainActor
 final class AppStore: ObservableObject {
@@ -24,8 +25,13 @@ final class AppStore: ObservableObject {
     @Published var latestVisualNarrationPath: String?
     @Published var settings: AppSettings
     @Published var latestError: String?
+    @Published var isTelegramRelayRunning = false
+    @Published var telegramRelayStatus = "Stopped"
 
     private let coordinator: LocalVoiceCoordinator
+    private var telegramRelayProcess: Process?
+    private let telegramRelayScriptPath = "/Users/joru2/Applications/MLXAudio/scripts/telegram_relay.py"
+    private let telegramRelayLogPath = "/Users/joru2/Library/Application Support/LocalVoiceUtility/logs/telegram-relay.log"
 
     init() {
         coordinator = LocalVoiceCoordinator()
@@ -39,6 +45,7 @@ final class AppStore: ObservableObject {
     func loadInitialState() async {
         do {
             settings = try coordinator.loadSettings()
+            syncDefaultWebhookTemplates()
             actionProfiles = try await coordinator.loadActionProfiles()
             _ = try await coordinator.recoverInterruptedJobs()
             jobs = try await coordinator.loadJobs()
@@ -122,6 +129,7 @@ final class AppStore: ObservableObject {
     }
 
     func saveSettings() {
+        syncDefaultWebhookTemplates()
         let settingsSnapshot = settings
         let profilesSnapshot = actionProfiles
         Task {
@@ -155,6 +163,90 @@ final class AppStore: ObservableObject {
     func removeActionProfile(id: UUID) {
         actionProfiles.removeAll { $0.id == id }
         saveSettings()
+    }
+
+    func upsertSavedWebhookTemplate(_ template: SavedWebhookTemplate) {
+        if let index = settings.savedWebhookTemplates.firstIndex(where: { $0.id == template.id }) {
+            settings.savedWebhookTemplates[index] = template
+        } else {
+            settings.savedWebhookTemplates.append(template)
+        }
+        saveSettings()
+    }
+
+    func removeSavedWebhookTemplate(id: UUID) {
+        settings.savedWebhookTemplates.removeAll { $0.id == id }
+        saveSettings()
+    }
+
+    func startTelegramRelay() {
+        let relay = settings.telegramRelay
+        guard !relay.botToken.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+              !relay.chatID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            latestError = "Set Telegram bot token and chat ID in Settings before starting the relay."
+            return
+        }
+        stopTelegramRelay()
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = ["python3", telegramRelayScriptPath]
+        process.environment = ProcessInfo.processInfo.environment.merging([
+            "TELEGRAM_BOT_TOKEN": relay.botToken,
+            "TELEGRAM_CHAT_ID": relay.chatID,
+            "TELEGRAM_RELAY_HOST": relay.host,
+            "TELEGRAM_RELAY_PORT": String(relay.port),
+        ]) { _, new in new }
+
+        let logURL = URL(fileURLWithPath: telegramRelayLogPath)
+        _ = FileManager.default.createFile(atPath: logURL.path, contents: nil)
+        if let handle = try? FileHandle(forWritingTo: logURL) {
+            _ = try? handle.seekToEnd()
+            process.standardOutput = handle
+            process.standardError = handle
+        }
+
+        process.terminationHandler = { [weak self] process in
+            Task { @MainActor in
+                guard let self else { return }
+                if self.telegramRelayProcess?.processIdentifier == process.processIdentifier {
+                    self.telegramRelayProcess = nil
+                    self.isTelegramRelayRunning = false
+                    self.telegramRelayStatus = "Stopped (\(process.terminationStatus))"
+                }
+            }
+        }
+
+        do {
+            try process.run()
+            telegramRelayProcess = process
+            isTelegramRelayRunning = true
+            telegramRelayStatus = "Running on \(relay.host):\(relay.port)"
+            syncDefaultWebhookTemplates()
+            saveSettings()
+        } catch {
+            latestError = error.localizedDescription
+        }
+    }
+
+    func stopTelegramRelay() {
+        telegramRelayProcess?.terminate()
+        telegramRelayProcess = nil
+        isTelegramRelayRunning = false
+        telegramRelayStatus = "Stopped"
+    }
+
+    func revealTelegramRelayLog() {
+        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: telegramRelayLogPath)])
+    }
+
+    private func syncDefaultWebhookTemplates() {
+        let relayTemplates = AppSettings.defaultWebhookTemplates(relay: settings.telegramRelay)
+        for relayTemplate in relayTemplates {
+            if let index = settings.savedWebhookTemplates.firstIndex(where: { $0.name == relayTemplate.name }) {
+                settings.savedWebhookTemplates[index].url = relayTemplate.url
+            }
+        }
     }
 
     func runVisualAnalysis(inputURL: URL, options: VisualAnalysisOptions) async throws -> VisualAnalysisResult {

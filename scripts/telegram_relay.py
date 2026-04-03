@@ -13,6 +13,22 @@ PORT = int(os.environ.get("TELEGRAM_RELAY_PORT", "8787"))
 
 
 class RelayHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        if self.path != "/health":
+            self.send_error(404, "Unknown endpoint")
+            return
+
+        payload = json.dumps({
+            "ok": True,
+            "telegramConfigured": bool(BOT_TOKEN and CHAT_ID),
+            "host": HOST,
+            "port": PORT,
+        }).encode("utf-8")
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.end_headers()
+        self.wfile.write(payload)
+
     def do_POST(self):
         if self.path not in ("/telegram/message", "/live"):
             self.send_error(404, "Unknown endpoint")

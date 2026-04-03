@@ -104,12 +104,6 @@ private enum VisualResultAction: String, CaseIterable {
     case webhook = "POST Webhook"
 }
 
-private struct WebhookTemplate: Identifiable, Hashable {
-    let id: String
-    let title: String
-    let urlTemplate: String
-}
-
 private struct BatchScannedPDFResult: Identifiable, Hashable {
     let id = UUID()
     let pdfPath: String
@@ -124,6 +118,12 @@ private struct VisualActionProfileDraft {
     var payload: String = ""
 }
 
+private struct SavedWebhookTemplateDraft {
+    var id: UUID?
+    var name: String = ""
+    var url: String = ""
+}
+
 private let visualPresets: [VisualPreset] = [
     .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false),
     .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false),
@@ -131,12 +131,6 @@ private let visualPresets: [VisualPreset] = [
     .init(id: "mlx-community/granite-4.0-vision-2b-4bit", title: "Granite 4.0 Vision", summary: "Updated vision reasoning", bestForOCR: false),
     .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true),
     .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading", bestForOCR: true),
-]
-
-private let webhookTemplates: [WebhookTemplate] = [
-    .init(id: "custom", title: "Custom", urlTemplate: ""),
-    .init(id: "telegram-local", title: "Telegram relay (local)", urlTemplate: "http://127.0.0.1:8787/telegram/message"),
-    .init(id: "generic-local", title: "Generic local webhook", urlTemplate: "http://127.0.0.1:8787/live"),
 ]
 
 struct VisualAnalysisScreen: View {
@@ -160,7 +154,7 @@ struct VisualAnalysisScreen: View {
     @State private var systemVoices: [VoiceOption] = []
     @State private var narrationPlayer: AVAudioPlayer?
     @State private var resultAction: VisualResultAction = .none
-    @State private var selectedWebhookTemplateID = "custom"
+    @State private var selectedWebhookTemplateID: UUID?
     @State private var webhookURL = ""
     @State private var additionalContext = ""
     @State private var selectedActionProfileID: UUID?
@@ -237,6 +231,11 @@ struct VisualAnalysisScreen: View {
                     TextField("Prompt", text: $prompt, axis: .vertical)
                         .lineLimit(4, reservesSpace: true)
                     TextField("Max tokens", text: $maxTokens)
+                    if workflow == .ocrStructured || workflow == .ocrReceipt || workflow == .ocrForm || workflow == .ocrTable {
+                        Text("Structured OCR modes emit both plain text and schema-shaped JSON output.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     Text("Repo path: \(store.settings.pythonMLXVLMRepoPath)")
                         .font(.caption)
                         .foregroundStyle(.secondary)
@@ -342,8 +341,9 @@ struct VisualAnalysisScreen: View {
                             }
                         }
                         Picker("Webhook template", selection: $selectedWebhookTemplateID) {
-                            ForEach(webhookTemplates) { template in
-                                Text(template.title).tag(template.id)
+                            Text("Custom").tag(UUID?.none)
+                            ForEach(store.settings.savedWebhookTemplates) { template in
+                                Text(template.name).tag(UUID?.some(template.id))
                             }
                         }
                         TextField("Webhook URL", text: $webhookURL)
@@ -384,7 +384,7 @@ struct VisualAnalysisScreen: View {
             narrationLanguageCode = store.settings.preferredReaderLanguage
             narrationVoiceIdentifier = store.settings.ttsDefaults.voiceIdentifier ?? ""
             systemVoices = availableSystemVoices()
-            selectedWebhookTemplateID = webhookTemplates.first?.id ?? "custom"
+            selectedWebhookTemplateID = store.settings.savedWebhookTemplates.first?.id
             if let latest = store.latestVisualAnalysis {
                 resultText = latest.text
                 outputPath = latest.outputPath
@@ -397,8 +397,8 @@ struct VisualAnalysisScreen: View {
             applyWorkflowDefaults(resetPromptOnly: false)
         }
         .onChange(of: selectedWebhookTemplateID) { _, newValue in
-            if let template = webhookTemplates.first(where: { $0.id == newValue }), !template.urlTemplate.isEmpty {
-                webhookURL = template.urlTemplate
+            if let template = store.settings.savedWebhookTemplates.first(where: { $0.id == newValue }), !template.url.isEmpty {
+                webhookURL = template.url
             }
         }
         .onChange(of: selectedActionProfileID) { _, newValue in
@@ -409,7 +409,7 @@ struct VisualAnalysisScreen: View {
             actionProfileDraft.name = profile.name
             actionProfileDraft.payload = route.payload
             webhookURL = route.payload
-            selectedWebhookTemplateID = "custom"
+            selectedWebhookTemplateID = nil
         }
     }
 
@@ -552,7 +552,7 @@ struct VisualAnalysisScreen: View {
 
     private var sortedVisualPresets: [VisualPreset] {
         switch workflow {
-        case .ocrPlainText, .ocrStructured:
+        case .ocrPlainText, .ocrStructured, .ocrReceipt, .ocrForm, .ocrTable:
             return visualPresets.sorted { lhs, rhs in
                 if lhs.bestForOCR != rhs.bestForOCR {
                     return lhs.bestForOCR && !rhs.bestForOCR
@@ -569,13 +569,15 @@ struct VisualAnalysisScreen: View {
         switch workflow {
         case .ocrPlainText:
             maxTokens = "1200"
-        case .ocrStructured:
+        case .ocrStructured, .ocrReceipt, .ocrForm:
             maxTokens = "1500"
+        case .ocrTable:
+            maxTokens = "1800"
         case .general, .screenSummary:
             maxTokens = "300"
         }
         if !resetPromptOnly {
-            if (workflow == .ocrPlainText || workflow == .ocrStructured),
+            if workflow == .ocrPlainText || workflow == .ocrStructured || workflow == .ocrReceipt || workflow == .ocrForm || workflow == .ocrTable,
                let ocrPreset = visualPresets.first(where: { $0.bestForOCR }) {
                 modelID = ocrPreset.id
             } else if workflow == .screenSummary,
@@ -1233,6 +1235,7 @@ struct TranscribeScreen: View {
 struct LivePlaceholderScreen: View {
     @EnvironmentObject private var store: AppStore
     @StateObject private var manager = LiveTranscriptionManager()
+    @State private var selectedWebhookTemplateID: UUID?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -1296,7 +1299,15 @@ struct LivePlaceholderScreen: View {
                 if manager.actionMode == .shell {
                     TextField("Shell template (use {{text}})", text: $manager.shellTemplate)
                 } else if manager.actionMode == .webhook {
-                    TextField("Webhook URL", text: $manager.webhookURL)
+                    VStack(alignment: .leading, spacing: 8) {
+                        Picker("Webhook template", selection: $selectedWebhookTemplateID) {
+                            Text("Custom").tag(UUID?.none)
+                            ForEach(store.settings.savedWebhookTemplates) { template in
+                                Text(template.name).tag(UUID?.some(template.id))
+                            }
+                        }
+                        TextField("Webhook URL", text: $manager.webhookURL)
+                    }
                 }
             }
 
@@ -1352,6 +1363,14 @@ struct LivePlaceholderScreen: View {
             manager.backend = store.settings.sttDefaults.backend
             manager.enhancementMode = store.settings.sttDefaults.enhancementMode
             manager.pythonRepoPath = store.settings.pythonMLXRepoPath
+            if manager.webhookURL.isEmpty {
+                selectedWebhookTemplateID = store.settings.savedWebhookTemplates.first?.id
+                if let template = store.settings.savedWebhookTemplates.first {
+                    manager.webhookURL = template.url
+                }
+            } else {
+                selectedWebhookTemplateID = store.settings.savedWebhookTemplates.first(where: { $0.url == manager.webhookURL })?.id
+            }
         }
         .onChange(of: manager.modelID) { _, newValue in
             if let preset = SpeechCatalog.preset(for: newValue) {
@@ -1359,6 +1378,11 @@ struct LivePlaceholderScreen: View {
                 if let firstLanguage = SpeechCatalog.languageOptions(for: preset, allowAutoDetect: true).first?.code {
                     manager.languageCode = firstLanguage
                 }
+            }
+        }
+        .onChange(of: selectedWebhookTemplateID) { _, newValue in
+            if let template = store.settings.savedWebhookTemplates.first(where: { $0.id == newValue }) {
+                manager.webhookURL = template.url
             }
         }
         .onDisappear {
@@ -1513,6 +1537,7 @@ struct SettingsScreen: View {
     @State private var modelVoiceTarget: String = TTSOptions().modelId
     @State private var previewText: String = "This is a preview of the selected reader voice."
     @State private var previewSynth: NSSpeechSynthesizer?
+    @State private var webhookTemplateDraft = SavedWebhookTemplateDraft()
 
     var body: some View {
         Form {
@@ -1623,6 +1648,73 @@ struct SettingsScreen: View {
                     .lineLimit(3, reservesSpace: true)
                 TextField("VLM repo path", text: $store.settings.pythonMLXVLMRepoPath)
                 Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment. OCR workflows pair best with Falcon OCR and DeepSeek OCR, and all-page PDF processing is intended for scanned documents.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Section("Webhook Templates") {
+                Text("These templates are shared by Visual Analysis and Live webhook actions.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                ForEach(store.settings.savedWebhookTemplates) { template in
+                    HStack {
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(template.name)
+                            Text(template.url)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        Button("Use") {
+                            webhookTemplateDraft = SavedWebhookTemplateDraft(id: template.id, name: template.name, url: template.url)
+                        }
+                        Button("Delete") {
+                            store.removeSavedWebhookTemplate(id: template.id)
+                        }
+                    }
+                }
+                TextField("Template name", text: $webhookTemplateDraft.name)
+                TextField("Template URL", text: $webhookTemplateDraft.url)
+                HStack {
+                    Button(webhookTemplateDraft.id == nil ? "Add Template" : "Update Template") {
+                        let template = SavedWebhookTemplate(
+                            id: webhookTemplateDraft.id ?? UUID(),
+                            name: webhookTemplateDraft.name.trimmingCharacters(in: .whitespacesAndNewlines),
+                            url: webhookTemplateDraft.url.trimmingCharacters(in: .whitespacesAndNewlines)
+                        )
+                        store.upsertSavedWebhookTemplate(template)
+                        webhookTemplateDraft = SavedWebhookTemplateDraft()
+                    }
+                    .disabled(webhookTemplateDraft.name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || webhookTemplateDraft.url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    if webhookTemplateDraft.id != nil {
+                        Button("Clear") {
+                            webhookTemplateDraft = SavedWebhookTemplateDraft()
+                        }
+                    }
+                }
+            }
+            Section("Telegram Relay") {
+                SecureField("Bot token", text: $store.settings.telegramRelay.botToken)
+                TextField("Chat ID", text: $store.settings.telegramRelay.chatID)
+                TextField("Host", text: $store.settings.telegramRelay.host)
+                Stepper(value: $store.settings.telegramRelay.port, in: 1...65535) {
+                    Text("Port: \(store.settings.telegramRelay.port)")
+                }
+                Text("Status: \(store.telegramRelayStatus)")
+                    .font(.caption)
+                    .foregroundStyle(store.isTelegramRelayRunning ? .green : .secondary)
+                HStack {
+                    Button(store.isTelegramRelayRunning ? "Restart Relay" : "Start Relay") {
+                        store.startTelegramRelay()
+                    }
+                    Button("Stop Relay") {
+                        store.stopTelegramRelay()
+                    }
+                    .disabled(!store.isTelegramRelayRunning)
+                    Button("Reveal Relay Log") {
+                        store.revealTelegramRelayLog()
+                    }
+                }
+                Text("When the relay is running, the default Telegram webhook template points to the local endpoint automatically.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
