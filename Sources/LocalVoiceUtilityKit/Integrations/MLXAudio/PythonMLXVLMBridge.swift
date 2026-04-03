@@ -284,7 +284,7 @@ public enum PythonMLXVLMBridge {
             throw NSError(
                 domain: "PythonMLXVLMBridge",
                 code: Int(process.terminationStatus),
-                userInfo: [NSLocalizedDescriptionKey: errorOutput.isEmpty ? "SAM 3 execution failed." : errorOutput]
+                userInfo: [NSLocalizedDescriptionKey: friendlyVLMError(errorOutput, modelId: modelId, fallback: "SAM 3 execution failed.")]
             )
         }
 
@@ -293,6 +293,33 @@ public enum PythonMLXVLMBridge {
             outputImagePath: outputImageURL.path,
             jsonPath: jsonURL.path
         )
+    }
+
+
+    private static func friendlyVLMError(_ raw: String, modelId: String, fallback: String) -> String {
+        let message = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !message.isEmpty else { return fallback }
+
+        let lowercased = message.lowercased()
+        if lowercased.contains("gated repo") || lowercased.contains("401 unauthorized") || lowercased.contains("repositorynotfounderror") {
+            return """
+            Model \(modelId) requires Hugging Face access or a valid HF_TOKEN. Configure access, then retry.
+
+            Upstream error:
+            \(message)
+            """
+        }
+
+        if lowercased.contains("out of memory") || lowercased.contains("peak memory") {
+            return """
+            Model \(modelId) exceeded available memory on this Mac. Try a smaller preset or lower-cost workflow.
+
+            Upstream error:
+            \(message)
+            """
+        }
+
+        return message
     }
 
     private static func captureWithScreencapture(arguments: [String], outputDirectory: URL) throws -> URL {

@@ -142,18 +142,19 @@ private struct SegmentationBoxDraft {
 private let visualPresets: [VisualPreset] = [
     .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
     .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false, supportsAudio: true, supportsTurboQuant: false),
-    .init(id: "google/gemma-4-e4b-it", title: "Gemma 4 E4B", summary: "Gemma 4 multimodal model with image and audio support", bestForOCR: false, supportsAudio: true, supportsTurboQuant: true),
-    .init(id: "google/gemma-4-31b-it", title: "Gemma 4 31B", summary: "Large Gemma 4 model; best candidate for TurboQuant KV cache", bestForOCR: false, supportsAudio: true, supportsTurboQuant: true),
+    .init(id: "google/gemma-4-e2b-it", title: "Gemma 4 E2B", summary: "Smaller Gemma 4 multimodal model with image and audio support", bestForOCR: false, supportsAudio: true, supportsTurboQuant: false),
+    .init(id: "google/gemma-4-e4b-it", title: "Gemma 4 E4B", summary: "Gemma 4 multimodal model with image and audio support", bestForOCR: false, supportsAudio: true, supportsTurboQuant: false),
+    .init(id: "google/gemma-4-31b-it", title: "Gemma 4 31B", summary: "Large Gemma 4 model; best candidate for TurboQuant KV cache", bestForOCR: false, supportsAudio: false, supportsTurboQuant: true),
     .init(id: "mlx-community/granite-vision-3.2-2b-4bit", title: "Granite Vision 3.2", summary: "Compact document and image reasoning", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
     .init(id: "ibm-granite/granite-4.0-3b-vision", title: "Granite 4.0 Vision", summary: "IBM Granite 4.0 vision model from mlx-vlm v0.4.3", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
-    .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true, supportsAudio: false, supportsTurboQuant: false),
+    .init(id: "tiiuae/Falcon-OCR", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true, supportsAudio: false, supportsTurboQuant: false),
     .init(id: "tiiuae/Falcon-Perception", title: "Falcon Perception", summary: "Detection and perception model for vision tasks", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
     .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading", bestForOCR: true, supportsAudio: false, supportsTurboQuant: false),
 ]
 
 private let segmentationPresets: [SegmentationPreset] = [
     .init(id: "facebook/sam3", title: "SAM 3", summary: "Detection and segmentation"),
-    .init(id: "facebook/sam3.1", title: "SAM 3.1", summary: "Latest SAM 3.1 detection and segmentation"),
+    .init(id: "mlx-community/sam3.1-bf16", title: "SAM 3.1", summary: "Latest SAM 3.1 detection and segmentation"),
 ]
 
 struct VisualAnalysisScreen: View {
@@ -288,6 +289,11 @@ struct VisualAnalysisScreen: View {
                             }
                         }
                         Text("Use TurboQuant for Gemma 4 long-context runs to reduce KV cache memory.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                    if modelID == "google/gemma-4-31b-it" {
+                        Text("Gemma 4 31B is a high-memory model. Expect slow first-run downloads and large RAM use; TurboQuant is mainly useful here.")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
@@ -787,6 +793,11 @@ struct SegmentationScreen: View {
                     Text("Use box prompts to constrain segmentation to specific regions. Example: `10,50,300,400`")
                         .font(.caption)
                         .foregroundStyle(.secondary)
+                    if modelID == "facebook/sam3" {
+                        Text("`facebook/sam3` is gated on Hugging Face. If access fails, switch to `mlx-community/sam3.1-bf16` or configure `HF_TOKEN`.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                 }
             }
 
