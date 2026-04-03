@@ -33,6 +33,8 @@ struct ContentView: View {
             HomeScreen()
         case .visual:
             VisualAnalysisScreen()
+        case .scannedPDF:
+            ScannedPDFToAudioScreen()
         case .pdf:
             PDFToAudioScreen()
         case .url:
@@ -60,6 +62,7 @@ struct HomeScreen: View {
                 .font(.title2.bold())
             HStack {
                 quickTile(title: "Analyze Image/PDF", action: { store.selectedScreen = .visual })
+                quickTile(title: "Scanned PDF -> Audio", action: { store.selectedScreen = .scannedPDF })
                 quickTile(title: "Read a PDF", action: { store.selectedScreen = .pdf })
                 quickTile(title: "Read a Web Page", action: { store.selectedScreen = .url })
                 quickTile(title: "Transcribe Audio/Video", action: { store.selectedScreen = .transcribe })
@@ -94,6 +97,13 @@ private struct VisualPreset: Identifiable, Hashable {
     let bestForOCR: Bool
 }
 
+private enum VisualResultAction: String, CaseIterable {
+    case none = "None"
+    case clipboard = "Copy to Clipboard"
+    case typeToFrontmost = "Type into Front App"
+    case webhook = "POST Webhook"
+}
+
 private let visualPresets: [VisualPreset] = [
     .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false),
     .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false),
@@ -122,6 +132,8 @@ struct VisualAnalysisScreen: View {
     @State private var narrationVoiceIdentifier = ""
     @State private var systemVoices: [VoiceOption] = []
     @State private var narrationPlayer: AVAudioPlayer?
+    @State private var resultAction: VisualResultAction = .none
+    @State private var webhookURL = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -266,6 +278,28 @@ struct VisualAnalysisScreen: View {
                                 NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: narrationPath)])
                             }
                         }
+                    }
+                }
+                .padding(.top, 4)
+            }
+
+            GroupBox("Result Actions") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Action", selection: $resultAction) {
+                        ForEach(VisualResultAction.allCases, id: \.self) { action in
+                            Text(action.rawValue).tag(action)
+                        }
+                    }
+                    if resultAction == .webhook {
+                        TextField("Webhook URL", text: $webhookURL)
+                    }
+                    HStack {
+                        Button("Run Action on Result") {
+                            Task { @MainActor in
+                                await performResultAction()
+                            }
+                        }
+                        .disabled(resultAction == .none || resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
                     }
                 }
                 .padding(.top, 4)
@@ -461,6 +495,212 @@ struct VisualAnalysisScreen: View {
                       let screenPreset = visualPresets.first(where: { $0.id == "mlx-community/granite-4.0-vision-2b-4bit" }) {
                 modelID = screenPreset.id
             }
+        }
+    }
+
+    private func performResultAction() async {
+        let text = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+
+        switch resultAction {
+        case .none:
+            break
+        case .clipboard:
+            let pasteboard = NSPasteboard.general
+            pasteboard.clearContents()
+            pasteboard.setString(text, forType: .string)
+        case .typeToFrontmost:
+            if NSWorkspace.shared.frontmostApplication?.bundleIdentifier == "com.localvoiceutility.desktop" {
+                store.latestError = "Type into Front App is ignored while Local Voice Utility is frontmost. Switch to the target app first."
+                return
+            }
+            _ = runProcess("/usr/bin/osascript", ["-e", appleScriptForKeystroke(text)])
+        case .webhook:
+            guard let url = URL(string: webhookURL),
+                  let body = try? JSONSerialization.data(withJSONObject: ["text": text]) else {
+                store.latestError = "Invalid webhook URL."
+                return
+            }
+            var request = URLRequest(url: url)
+            request.httpMethod = "POST"
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = body
+            do {
+                _ = try await URLSession.shared.data(for: request)
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+        }
+    }
+}
+
+struct ScannedPDFToAudioScreen: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var selectedPDF: URL?
+    @State private var isRunning = false
+    @State private var ocrWorkflow: VisualAnalysisWorkflow = .ocrPlainText
+    @State private var ocrModelID = "mlx-community/falcon-ocr-3b-4bit"
+    @State private var readModelID = TTSOptions().modelId
+    @State private var readLanguageCode = TTSOptions().languageCode
+    @State private var readVoiceIdentifier = ""
+    @State private var systemVoices: [VoiceOption] = []
+    @State private var extractedText = ""
+    @State private var transcriptPath: String?
+    @State private var audioPath: String?
+    @State private var audioPlayer: AVAudioPlayer?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Scanned PDF -> Audio")
+                .font(.title2.bold())
+            Text("Run OCR across all pages of a scanned PDF, then generate narration in one pass.")
+                .foregroundStyle(.secondary)
+
+            Form {
+                Section("Input") {
+                    Text(selectedPDF?.path ?? "No PDF selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Select PDF") {
+                            let panel = NSOpenPanel()
+                            panel.allowedContentTypes = [.pdf]
+                            panel.allowsMultipleSelection = false
+                            if panel.runModal() == .OK {
+                                selectedPDF = panel.url
+                            }
+                        }
+                        if let selectedPDF {
+                            Button("Reveal PDF") {
+                                NSWorkspace.shared.activateFileViewerSelecting([selectedPDF])
+                            }
+                        }
+                    }
+                }
+
+                Section("OCR") {
+                    Picker("OCR mode", selection: $ocrWorkflow) {
+                        Text("Plain text").tag(VisualAnalysisWorkflow.ocrPlainText)
+                        Text("Structured").tag(VisualAnalysisWorkflow.ocrStructured)
+                    }
+                    Picker("OCR model", selection: $ocrModelID) {
+                        ForEach(visualPresets.filter(\.bestForOCR)) { preset in
+                            Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                        }
+                    }
+                }
+
+                Section("Reader") {
+                    Picker("Reader model", selection: $readModelID) {
+                        ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
+                            Text(presetMenuLabel(preset)).tag(preset.id)
+                        }
+                    }
+                    Picker("Reader language", selection: $readLanguageCode) {
+                        ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: readModelID), allowAutoDetect: false)) { language in
+                            Text(language.label).tag(language.code)
+                        }
+                    }
+                    Picker("Reader voice", selection: $readVoiceIdentifier) {
+                        Text("System Default").tag("")
+                        ForEach(systemVoices, id: \.id) { voice in
+                            Text(voice.label).tag(voice.id)
+                        }
+                    }
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(isRunning ? "Processing..." : "Extract OCR and Generate Audio") {
+                    runScannedPDFWorkflow()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || selectedPDF == nil)
+
+                if let transcriptPath {
+                    Button("Open OCR Text") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: transcriptPath))
+                    }
+                }
+                if let audioPath {
+                    Button(audioPlayer?.isPlaying == true ? "Stop Audio" : "Play Audio") {
+                        toggleAudioPlayback(path: audioPath)
+                    }
+                    Button("Reveal Audio") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: audioPath)])
+                    }
+                }
+            }
+
+            Text("OCR Output")
+                .font(.headline)
+            ScrollView {
+                Text(extractedText.isEmpty ? "No OCR output yet." : extractedText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(24)
+        .onAppear {
+            systemVoices = availableSystemVoices()
+            readLanguageCode = store.settings.preferredReaderLanguage
+            readVoiceIdentifier = store.settings.ttsDefaults.voiceIdentifier ?? ""
+        }
+    }
+
+    private func runScannedPDFWorkflow() {
+        guard let selectedPDF else { return }
+        isRunning = true
+        Task { @MainActor in
+            defer { isRunning = false }
+            do {
+                let analysis = try await store.runVisualAnalysis(
+                    inputURL: selectedPDF,
+                    options: VisualAnalysisOptions(
+                        modelId: ocrModelID,
+                        workflow: ocrWorkflow,
+                        prompt: ocrWorkflow.defaultPrompt,
+                        maxTokens: ocrWorkflow == .ocrStructured ? 1500 : 1200,
+                        processAllPDFPages: true,
+                        pythonRepoPath: store.settings.pythonMLXVLMRepoPath
+                    )
+                )
+                extractedText = analysis.text
+                transcriptPath = analysis.outputPath
+                audioPath = try await store.runTextToAudio(
+                    text: analysis.text,
+                    options: TTSOptions(
+                        modelId: readModelID,
+                        outputFormat: "wav",
+                        voiceIdentifier: readVoiceIdentifier.isEmpty ? nil : readVoiceIdentifier,
+                        languageCode: readLanguageCode,
+                        backend: .automatic,
+                        pythonRepoPath: store.settings.pythonMLXRepoPath
+                    )
+                )
+                if let audioPath {
+                    toggleAudioPlayback(path: audioPath)
+                }
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+        }
+    }
+
+    private func toggleAudioPlayback(path: String) {
+        if audioPlayer?.isPlaying == true {
+            audioPlayer?.stop()
+            audioPlayer = nil
+            return
+        }
+        do {
+            let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+            audioPlayer = player
+            player.prepareToPlay()
+            player.play()
+        } catch {
+            store.latestError = error.localizedDescription
+            audioPlayer = nil
         }
     }
 }
@@ -1288,6 +1528,26 @@ private func availableSystemVoices() -> [VoiceOption] {
         return VoiceOption(id: id.rawValue, label: label)
     }
     .sorted { $0.label < $1.label }
+}
+
+private func runProcess(_ launchPath: String, _ args: [String]) -> Int32 {
+    let process = Process()
+    process.executableURL = URL(fileURLWithPath: launchPath)
+    process.arguments = args
+    do {
+        try process.run()
+        process.waitUntilExit()
+        return process.terminationStatus
+    } catch {
+        return -1
+    }
+}
+
+private func appleScriptForKeystroke(_ text: String) -> String {
+    let escaped = text
+        .replacingOccurrences(of: "\\", with: "\\\\")
+        .replacingOccurrences(of: "\"", with: "\\\"")
+    return "tell application \"System Events\" to keystroke \"\(escaped)\""
 }
 
 @ViewBuilder
