@@ -1,6 +1,23 @@
 import Foundation
 import CoreGraphics
 
+public enum VLMKVQuantizationScheme: String, Codable, CaseIterable, Sendable {
+    case uniform
+    case turboquant
+}
+
+public enum SamTaskMode: String, Codable, CaseIterable, Sendable {
+    case detect
+    case segment
+
+    public var displayName: String {
+        switch self {
+        case .detect: return "Detect"
+        case .segment: return "Segment"
+        }
+    }
+}
+
 public enum VisualAnalysisWorkflow: String, Codable, CaseIterable, Sendable {
     case general
     case ocrPlainText
@@ -47,6 +64,9 @@ public struct VisualAnalysisOptions: Codable, Sendable {
     public var workflow: VisualAnalysisWorkflow
     public var prompt: String
     public var maxTokens: Int
+    public var audioInputPath: String?
+    public var kvBits: Double?
+    public var kvQuantScheme: VLMKVQuantizationScheme
     public var processAllPDFPages: Bool
     public var pythonRepoPath: String
 
@@ -55,6 +75,9 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         workflow: VisualAnalysisWorkflow = .general,
         prompt: String = VisualAnalysisWorkflow.general.defaultPrompt,
         maxTokens: Int = 300,
+        audioInputPath: String? = nil,
+        kvBits: Double? = nil,
+        kvQuantScheme: VLMKVQuantizationScheme = .uniform,
         processAllPDFPages: Bool = false,
         pythonRepoPath: String = PythonMLXVLMBridge.defaultRepoPath
     ) {
@@ -62,6 +85,9 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         self.workflow = workflow
         self.prompt = prompt
         self.maxTokens = maxTokens
+        self.audioInputPath = audioInputPath
+        self.kvBits = kvBits
+        self.kvQuantScheme = kvQuantScheme
         self.processAllPDFPages = processAllPDFPages
         self.pythonRepoPath = pythonRepoPath
     }
@@ -71,6 +97,9 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         case workflow
         case prompt
         case maxTokens
+        case audioInputPath
+        case kvBits
+        case kvQuantScheme
         case processAllPDFPages
         case pythonRepoPath
     }
@@ -81,6 +110,9 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         workflow = try container.decodeIfPresent(VisualAnalysisWorkflow.self, forKey: .workflow) ?? .general
         prompt = try container.decodeIfPresent(String.self, forKey: .prompt) ?? workflow.defaultPrompt
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 300
+        audioInputPath = try container.decodeIfPresent(String.self, forKey: .audioInputPath)
+        kvBits = try container.decodeIfPresent(Double.self, forKey: .kvBits)
+        kvQuantScheme = try container.decodeIfPresent(VLMKVQuantizationScheme.self, forKey: .kvQuantScheme) ?? .uniform
         processAllPDFPages = try container.decodeIfPresent(Bool.self, forKey: .processAllPDFPages) ?? false
         pythonRepoPath = try container.decodeIfPresent(String.self, forKey: .pythonRepoPath) ?? PythonMLXVLMBridge.defaultRepoPath
     }
@@ -91,6 +123,9 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         try container.encode(workflow, forKey: .workflow)
         try container.encode(prompt, forKey: .prompt)
         try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encodeIfPresent(audioInputPath, forKey: .audioInputPath)
+        try container.encodeIfPresent(kvBits, forKey: .kvBits)
+        try container.encode(kvQuantScheme, forKey: .kvQuantScheme)
         try container.encode(processAllPDFPages, forKey: .processAllPDFPages)
         try container.encode(pythonRepoPath, forKey: .pythonRepoPath)
     }
@@ -101,6 +136,12 @@ public struct VisualAnalysisResult: Sendable {
     public let outputPath: String
     public let renderedInputPath: String
     public let jsonPath: String?
+}
+
+public struct SegmentationResult: Sendable {
+    public let summaryText: String
+    public let outputImagePath: String
+    public let jsonPath: String
 }
 
 public enum PythonMLXVLMBridge {
@@ -136,7 +177,10 @@ public enum PythonMLXVLMBridge {
                 modelId: options.modelId,
                 prompt: prompt,
                 maxTokens: options.maxTokens,
-                imagePath: renderedInputURL.path
+                imagePath: renderedInputURL.path,
+                audioInputPath: options.audioInputPath,
+                kvBits: options.kvBits,
+                kvQuantScheme: options.kvQuantScheme
             )
             let labeledOutput = renderedInputURLs.count > 1 ? "Page \(index + 1)\n\(output)" : output
             pageOutputs.append(labeledOutput)
@@ -179,6 +223,78 @@ public enum PythonMLXVLMBridge {
         return try captureWithScreencapture(arguments: ["-l", String(windowID), "-x"], outputDirectory: outputDirectory)
     }
 
+    public static func runSegmentation(
+        inputURL: URL,
+        task: SamTaskMode,
+        modelId: String,
+        prompt: String,
+        boxes: String?,
+        threshold: Double,
+        showBoxes: Bool,
+        pythonRepoPath: String,
+        outputDirectory: URL
+    ) async throws -> SegmentationResult {
+        let repoPath = normalizedRepoPath(pythonRepoPath)
+        let pythonExecutable = try resolvedPythonExecutable(repoPath: repoPath)
+        let scriptPath = URL(fileURLWithPath: repoPath)
+            .deletingLastPathComponent()
+            .appendingPathComponent("scripts/sam3_runner.py")
+            .path
+        let stem = "sam3-\(task.rawValue)-\(UUID().uuidString)"
+        let outputImageURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("png")
+        let jsonURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("json")
+
+        var arguments = [
+            scriptPath,
+            "--repo-path", repoPath,
+            "--image", inputURL.path,
+            "--task", task.rawValue,
+            "--model", modelId,
+            "--prompt", prompt,
+            "--threshold", String(threshold),
+            "--output-image", outputImageURL.path,
+            "--output-json", jsonURL.path,
+        ]
+        if let boxes, !boxes.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            arguments += ["--boxes", boxes]
+        }
+        if showBoxes {
+            arguments.append("--show-boxes")
+        }
+
+        let process = Process()
+        process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
+        process.executableURL = URL(fileURLWithPath: pythonExecutable)
+        process.arguments = arguments
+
+        let stdout = Pipe()
+        let stderr = Pipe()
+        process.standardOutput = stdout
+        process.standardError = stderr
+
+        try process.run()
+        process.waitUntilExit()
+
+        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
+        let output = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let errorOutput = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: Int(process.terminationStatus),
+                userInfo: [NSLocalizedDescriptionKey: errorOutput.isEmpty ? "SAM 3 execution failed." : errorOutput]
+            )
+        }
+
+        return SegmentationResult(
+            summaryText: output,
+            outputImagePath: outputImageURL.path,
+            jsonPath: jsonURL.path
+        )
+    }
+
     private static func captureWithScreencapture(arguments: [String], outputDirectory: URL) throws -> URL {
         let outputURL = outputDirectory.appendingPathComponent("visual-screenshot-\(UUID().uuidString).png")
 
@@ -213,14 +329,23 @@ public enum PythonMLXVLMBridge {
         modelId: String,
         prompt: String,
         maxTokens: Int,
-        imagePath: String
+        imagePath: String,
+        audioInputPath: String?,
+        kvBits: Double?,
+        kvQuantScheme: VLMKVQuantizationScheme
     ) throws -> String {
-        let arguments = invocation.arguments + [
+        var arguments = invocation.arguments + [
             "--model", modelId,
             "--max-tokens", String(maxTokens),
             "--prompt", prompt,
             "--image", imagePath,
         ]
+        if let audioInputPath, !audioInputPath.isEmpty {
+            arguments += ["--audio", audioInputPath]
+        }
+        if let kvBits {
+            arguments += ["--kv-bits", String(kvBits), "--kv-quant-scheme", kvQuantScheme.rawValue]
+        }
 
         let process = Process()
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
@@ -260,6 +385,21 @@ public enum PythonMLXVLMBridge {
     private static func normalizedRepoPath(_ path: String) -> String {
         let trimmed = path.trimmingCharacters(in: .whitespacesAndNewlines)
         return trimmed.isEmpty ? defaultRepoPath : trimmed
+    }
+
+    private static func resolvedPythonExecutable(repoPath: String) throws -> String {
+        let candidates = [
+            URL(fileURLWithPath: repoPath).appendingPathComponent(".venv/bin/python").path,
+            "/usr/bin/python3",
+        ]
+        if let match = candidates.first(where: { FileManager.default.isExecutableFile(atPath: $0) }) {
+            return match
+        }
+        throw NSError(
+            domain: "PythonMLXVLMBridge",
+            code: 9,
+            userInfo: [NSLocalizedDescriptionKey: "Could not find a Python runtime for mlx-vlm."]
+        )
     }
 
     private static func resolvedInvocation(repoPath: String) throws -> (executable: String, arguments: [String]) {

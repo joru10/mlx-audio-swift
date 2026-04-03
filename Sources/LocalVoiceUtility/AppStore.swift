@@ -8,6 +8,7 @@ final class AppStore: ObservableObject {
     enum Screen: String, CaseIterable, Hashable {
         case home = "Home"
         case visual = "Visual Analysis"
+        case segment = "Detection & Segmentation"
         case scannedPDF = "Scanned PDF -> Audio"
         case pdf = "PDF -> Audio"
         case url = "URL -> Audio"

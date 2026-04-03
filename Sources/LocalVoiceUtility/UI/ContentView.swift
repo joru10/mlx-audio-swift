@@ -33,6 +33,8 @@ struct ContentView: View {
             HomeScreen()
         case .visual:
             VisualAnalysisScreen()
+        case .segment:
+            SegmentationScreen()
         case .scannedPDF:
             ScannedPDFToAudioScreen()
         case .pdf:
@@ -62,6 +64,7 @@ struct HomeScreen: View {
                 .font(.title2.bold())
             HStack {
                 quickTile(title: "Analyze Image/PDF", action: { store.selectedScreen = .visual })
+                quickTile(title: "Detect & Segment", action: { store.selectedScreen = .segment })
                 quickTile(title: "Scanned PDF -> Audio", action: { store.selectedScreen = .scannedPDF })
                 quickTile(title: "Read a PDF", action: { store.selectedScreen = .pdf })
                 quickTile(title: "Read a Web Page", action: { store.selectedScreen = .url })
@@ -95,6 +98,14 @@ private struct VisualPreset: Identifiable, Hashable {
     let title: String
     let summary: String
     let bestForOCR: Bool
+    let supportsAudio: Bool
+    let supportsTurboQuant: Bool
+}
+
+private struct SegmentationPreset: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let summary: String
 }
 
 private enum VisualResultAction: String, CaseIterable {
@@ -124,22 +135,37 @@ private struct SavedWebhookTemplateDraft {
     var url: String = ""
 }
 
+private struct SegmentationBoxDraft {
+    var text: String = ""
+}
+
 private let visualPresets: [VisualPreset] = [
-    .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false),
-    .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false),
-    .init(id: "mlx-community/granite-vision-3.2-2b-4bit", title: "Granite Vision 3.2", summary: "Compact document and image reasoning", bestForOCR: false),
-    .init(id: "mlx-community/granite-4.0-vision-2b-4bit", title: "Granite 4.0 Vision", summary: "Updated vision reasoning", bestForOCR: false),
-    .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true),
-    .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading", bestForOCR: true),
+    .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
+    .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false, supportsAudio: true, supportsTurboQuant: false),
+    .init(id: "google/gemma-4-e4b-it", title: "Gemma 4 E4B", summary: "Gemma 4 multimodal model with image and audio support", bestForOCR: false, supportsAudio: true, supportsTurboQuant: true),
+    .init(id: "google/gemma-4-31b-it", title: "Gemma 4 31B", summary: "Large Gemma 4 model; best candidate for TurboQuant KV cache", bestForOCR: false, supportsAudio: true, supportsTurboQuant: true),
+    .init(id: "mlx-community/granite-vision-3.2-2b-4bit", title: "Granite Vision 3.2", summary: "Compact document and image reasoning", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
+    .init(id: "ibm-granite/granite-4.0-3b-vision", title: "Granite 4.0 Vision", summary: "IBM Granite 4.0 vision model from mlx-vlm v0.4.3", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
+    .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true, supportsAudio: false, supportsTurboQuant: false),
+    .init(id: "tiiuae/Falcon-Perception", title: "Falcon Perception", summary: "Detection and perception model for vision tasks", bestForOCR: false, supportsAudio: false, supportsTurboQuant: false),
+    .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading", bestForOCR: true, supportsAudio: false, supportsTurboQuant: false),
+]
+
+private let segmentationPresets: [SegmentationPreset] = [
+    .init(id: "facebook/sam3", title: "SAM 3", summary: "Detection and segmentation"),
+    .init(id: "facebook/sam3.1", title: "SAM 3.1", summary: "Latest SAM 3.1 detection and segmentation"),
 ]
 
 struct VisualAnalysisScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedInput: URL?
+    @State private var selectedAudioInput: URL?
     @State private var workflow: VisualAnalysisWorkflow = .general
     @State private var modelID = VisualAnalysisOptions().modelId
     @State private var prompt = VisualAnalysisOptions().prompt
     @State private var maxTokens = "300"
+    @State private var kvBits = ""
+    @State private var kvQuantScheme: VLMKVQuantizationScheme = .uniform
     @State private var isRunning = false
     @State private var isCapturingScreenshot = false
     @State private var isNarrating = false
@@ -159,6 +185,10 @@ struct VisualAnalysisScreen: View {
     @State private var additionalContext = ""
     @State private var selectedActionProfileID: UUID?
     @State private var actionProfileDraft = VisualActionProfileDraft()
+
+    private var selectedPreset: VisualPreset? {
+        visualPresets.first(where: { $0.id == modelID })
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -201,6 +231,25 @@ struct VisualAnalysisScreen: View {
                         ))
                         .toggleStyle(.switch)
                     }
+                    if selectedPreset?.supportsAudio == true {
+                        Divider()
+                        Text(selectedAudioInput?.path ?? "No audio context selected")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                        HStack {
+                            Button("Select Audio Context") {
+                                pickAudioContext()
+                            }
+                            if let selectedAudioInput {
+                                Button("Reveal Audio") {
+                                    NSWorkspace.shared.activateFileViewerSelecting([selectedAudioInput])
+                                }
+                                Button("Clear Audio") {
+                                    self.selectedAudioInput = nil
+                                }
+                            }
+                        }
+                    }
                 }
 
                 Section("Workflow") {
@@ -231,6 +280,17 @@ struct VisualAnalysisScreen: View {
                     TextField("Prompt", text: $prompt, axis: .vertical)
                         .lineLimit(4, reservesSpace: true)
                     TextField("Max tokens", text: $maxTokens)
+                    if selectedPreset?.supportsTurboQuant == true {
+                        TextField("KV bits", text: $kvBits)
+                        Picker("KV quant scheme", selection: $kvQuantScheme) {
+                            ForEach(VLMKVQuantizationScheme.allCases, id: \.self) { option in
+                                Text(option.rawValue).tag(option)
+                            }
+                        }
+                        Text("Use TurboQuant for Gemma 4 long-context runs to reduce KV cache memory.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
                     if workflow == .ocrStructured || workflow == .ocrReceipt || workflow == .ocrForm || workflow == .ocrTable {
                         Text("Structured OCR modes emit both plain text and schema-shaped JSON output.")
                             .font(.caption)
@@ -380,6 +440,9 @@ struct VisualAnalysisScreen: View {
             modelID = store.settings.visualDefaults.modelId
             prompt = store.settings.visualDefaults.prompt
             maxTokens = String(store.settings.visualDefaults.maxTokens)
+            selectedAudioInput = store.settings.visualDefaults.audioInputPath.map { URL(fileURLWithPath: $0) }
+            kvBits = store.settings.visualDefaults.kvBits.map { String($0) } ?? ""
+            kvQuantScheme = store.settings.visualDefaults.kvQuantScheme
             narrationModelID = store.settings.ttsDefaults.modelId
             narrationLanguageCode = store.settings.preferredReaderLanguage
             narrationVoiceIdentifier = store.settings.ttsDefaults.voiceIdentifier ?? ""
@@ -395,6 +458,17 @@ struct VisualAnalysisScreen: View {
         }
         .onChange(of: workflow) { _, _ in
             applyWorkflowDefaults(resetPromptOnly: false)
+        }
+        .onChange(of: modelID) { _, newValue in
+            if let preset = visualPresets.first(where: { $0.id == newValue }) {
+                if !preset.supportsAudio {
+                    selectedAudioInput = nil
+                }
+                if !preset.supportsTurboQuant {
+                    kvBits = ""
+                    kvQuantScheme = .uniform
+                }
+            }
         }
         .onChange(of: selectedWebhookTemplateID) { _, newValue in
             if let template = store.settings.savedWebhookTemplates.first(where: { $0.id == newValue }), !template.url.isEmpty {
@@ -419,6 +493,15 @@ struct VisualAnalysisScreen: View {
         panel.allowsMultipleSelection = false
         if panel.runModal() == .OK {
             selectedInput = panel.url
+        }
+    }
+
+    private func pickAudioContext() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK {
+            selectedAudioInput = panel.url
         }
     }
 
@@ -473,6 +556,7 @@ struct VisualAnalysisScreen: View {
     private func runAnalysis() {
         guard let selectedInput, let tokenCount = Int(maxTokens.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
         isRunning = true
+        let resolvedKVBits = Double(kvBits.trimmingCharacters(in: .whitespacesAndNewlines))
         Task { @MainActor in
             do {
                 store.settings.visualDefaults = VisualAnalysisOptions(
@@ -480,6 +564,9 @@ struct VisualAnalysisScreen: View {
                     workflow: workflow,
                     prompt: prompt,
                     maxTokens: tokenCount,
+                    audioInputPath: selectedAudioInput?.path,
+                    kvBits: resolvedKVBits,
+                    kvQuantScheme: kvQuantScheme,
                     processAllPDFPages: store.settings.visualDefaults.processAllPDFPages,
                     pythonRepoPath: store.settings.pythonMLXVLMRepoPath
                 )
@@ -491,6 +578,9 @@ struct VisualAnalysisScreen: View {
                         workflow: workflow,
                         prompt: combinedPrompt(),
                         maxTokens: tokenCount,
+                        audioInputPath: selectedAudioInput?.path,
+                        kvBits: resolvedKVBits,
+                        kvQuantScheme: kvQuantScheme,
                         processAllPDFPages: store.settings.visualDefaults.processAllPDFPages,
                         pythonRepoPath: store.settings.pythonMLXVLMRepoPath
                     )
@@ -637,6 +727,137 @@ struct VisualAnalysisScreen: View {
         store.upsertActionProfile(profile)
         actionProfileDraft.id = profile.id
         selectedActionProfileID = profile.id
+    }
+}
+
+struct SegmentationScreen: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var selectedInput: URL?
+    @State private var task: SamTaskMode = .segment
+    @State private var modelID = segmentationPresets.first?.id ?? "facebook/sam3.1"
+    @State private var prompt = "a person"
+    @State private var boxes = ""
+    @State private var threshold = "0.3"
+    @State private var showBoxes = true
+    @State private var isRunning = false
+    @State private var summaryText = ""
+    @State private var outputImagePath: String?
+    @State private var jsonPath: String?
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 14) {
+            Text("Detection & Segmentation")
+                .font(.title2.bold())
+            Text("Use SAM 3 / 3.1 for object detection or segmentation, with optional box prompts.")
+                .foregroundStyle(.secondary)
+
+            Form {
+                Section("Input") {
+                    Text(selectedInput?.path ?? "No image selected")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack {
+                        Button("Select Image") {
+                            pickImage()
+                        }
+                        if let selectedInput {
+                            Button("Reveal Image") {
+                                NSWorkspace.shared.activateFileViewerSelecting([selectedInput])
+                            }
+                        }
+                    }
+                }
+
+                Section("Model") {
+                    Picker("Preset", selection: $modelID) {
+                        ForEach(segmentationPresets) { preset in
+                            Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                        }
+                    }
+                    TextField("Model ID", text: $modelID)
+                    Picker("Task", selection: $task) {
+                        ForEach(SamTaskMode.allCases, id: \.self) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    TextField("Prompt", text: $prompt)
+                    TextField("Box prompts (x1,y1,x2,y2;...)", text: $boxes)
+                    TextField("Threshold", text: $threshold)
+                    Toggle("Show boxes in output", isOn: $showBoxes)
+                    Text("Use box prompts to constrain segmentation to specific regions. Example: `10,50,300,400`")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            HStack(spacing: 12) {
+                Button(isRunning ? "Running..." : "Run") {
+                    runSegmentation()
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(isRunning || selectedInput == nil)
+
+                if let outputImagePath {
+                    Button("Open Output") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: outputImagePath))
+                    }
+                    Button("Reveal Output") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: outputImagePath)])
+                    }
+                }
+                if let jsonPath {
+                    Button("Open JSON") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: jsonPath))
+                    }
+                }
+            }
+
+            Text("Summary")
+                .font(.headline)
+            ScrollView {
+                Text(summaryText.isEmpty ? "No result yet." : summaryText)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(maxHeight: .infinity)
+        }
+        .padding(24)
+    }
+
+    private func pickImage() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        if panel.runModal() == .OK {
+            selectedInput = panel.url
+        }
+    }
+
+    private func runSegmentation() {
+        guard let selectedInput,
+              let resolvedThreshold = Double(threshold.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
+        isRunning = true
+        summaryText = ""
+        Task { @MainActor in
+            do {
+                let result = try await PythonMLXVLMBridge.runSegmentation(
+                    inputURL: selectedInput,
+                    task: task,
+                    modelId: modelID,
+                    prompt: prompt.trimmingCharacters(in: .whitespacesAndNewlines),
+                    boxes: boxes.trimmingCharacters(in: .whitespacesAndNewlines),
+                    threshold: resolvedThreshold,
+                    showBoxes: showBoxes,
+                    pythonRepoPath: store.settings.pythonMLXVLMRepoPath,
+                    outputDirectory: URL(fileURLWithPath: store.settings.outputFolderPath, isDirectory: true)
+                )
+                summaryText = result.summaryText
+                outputImagePath = result.outputImagePath
+                jsonPath = result.jsonPath
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+            isRunning = false
+        }
     }
 }
 
@@ -1646,6 +1867,16 @@ struct SettingsScreen: View {
                 }
                 TextField("Default visual prompt", text: $store.settings.visualDefaults.prompt, axis: .vertical)
                     .lineLimit(3, reservesSpace: true)
+                TextField("Default VLM max tokens", value: $store.settings.visualDefaults.maxTokens, format: .number)
+                TextField("Default KV bits", value: Binding(
+                    get: { store.settings.visualDefaults.kvBits ?? 0 },
+                    set: { store.settings.visualDefaults.kvBits = $0 == 0 ? nil : $0 }
+                ), format: .number)
+                Picker("Default KV quant scheme", selection: $store.settings.visualDefaults.kvQuantScheme) {
+                    ForEach(VLMKVQuantizationScheme.allCases, id: \.self) { option in
+                        Text(option.rawValue).tag(option)
+                    }
+                }
                 TextField("VLM repo path", text: $store.settings.pythonMLXVLMRepoPath)
                 Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment. OCR workflows pair best with Falcon OCR and DeepSeek OCR, and all-page PDF processing is intended for scanned documents.")
                     .font(.caption)
