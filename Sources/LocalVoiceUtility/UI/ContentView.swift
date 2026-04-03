@@ -13,9 +13,12 @@ struct ContentView: View {
                 Text(screen.rawValue)
             }
             .navigationTitle("Local Voice Utility")
+            .navigationSplitViewColumnWidth(min: 220, ideal: 250)
         } detail: {
             screenView
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
+        .navigationSplitViewStyle(.balanced)
         .alert("Error", isPresented: Binding(
             get: { store.latestError != nil },
             set: { _ in store.latestError = nil }
@@ -55,14 +58,30 @@ struct ContentView: View {
     }
 }
 
+private struct AdaptiveButtonRow<Content: View>: View {
+    @ViewBuilder let content: () -> Content
+
+    var body: some View {
+        ViewThatFits(in: .horizontal) {
+            HStack(alignment: .top, spacing: 12) {
+                content()
+            }
+            VStack(alignment: .leading, spacing: 12) {
+                content()
+            }
+        }
+    }
+}
+
 struct HomeScreen: View {
     @EnvironmentObject private var store: AppStore
+    private let quickActionColumns = [GridItem(.adaptive(minimum: 180, maximum: 260), spacing: 12)]
 
     var body: some View {
         VStack(alignment: .leading, spacing: 16) {
             Text("Quick Actions")
                 .font(.title2.bold())
-            HStack {
+            LazyVGrid(columns: quickActionColumns, alignment: .leading, spacing: 12) {
                 quickTile(title: "Analyze Image/PDF", action: { store.selectedScreen = .visual })
                 quickTile(title: "Detect & Segment", action: { store.selectedScreen = .segment })
                 quickTile(title: "Scanned PDF -> Audio", action: { store.selectedScreen = .scannedPDF })
@@ -316,7 +335,7 @@ struct VisualAnalysisScreen: View {
                 }
             }
 
-            HStack(spacing: 12) {
+            AdaptiveButtonRow {
                 Button(isRunning ? "Analyzing..." : "Run Analysis") {
                     runAnalysis()
                 }
@@ -372,7 +391,7 @@ struct VisualAnalysisScreen: View {
                             Text(voice.label).tag(voice.id)
                         }
                     }
-                    HStack {
+                    AdaptiveButtonRow {
                         Button(isNarrating ? "Generating Audio..." : "Read Result Aloud") {
                             narrateResult()
                         }
@@ -413,7 +432,7 @@ struct VisualAnalysisScreen: View {
                             }
                         }
                         TextField("Webhook URL", text: $webhookURL)
-                        HStack {
+                        AdaptiveButtonRow {
                             TextField("Profile name", text: $actionProfileDraft.name)
                             Button("Save Profile") {
                                 saveCurrentActionProfile()
@@ -428,7 +447,7 @@ struct VisualAnalysisScreen: View {
                             }
                         }
                     }
-                    HStack {
+                    AdaptiveButtonRow {
                         Button("Run Action on Result") {
                             Task { @MainActor in
                                 await performResultAction()
@@ -801,7 +820,7 @@ struct SegmentationScreen: View {
                 }
             }
 
-            HStack(spacing: 12) {
+            AdaptiveButtonRow {
                 Button(isRunning ? "Running..." : "Run") {
                     runSegmentation()
                 }
@@ -962,7 +981,7 @@ struct ScannedPDFToAudioScreen: View {
                 }
             }
 
-            HStack(spacing: 12) {
+            AdaptiveButtonRow {
                 Button(isRunning ? "Processing..." : (batchMode ? "Process Batch" : "Extract OCR and Generate Audio")) {
                     runScannedPDFWorkflow()
                 }
@@ -1474,7 +1493,7 @@ struct LivePlaceholderScreen: View {
             Text("Live Voice")
                 .font(.title2.bold())
 
-            HStack(spacing: 12) {
+            AdaptiveButtonRow {
                 Picker("Input", selection: $manager.selectedInputDeviceID) {
                     ForEach(manager.availableInputDevices) { device in
                         Text(device.name).tag(device.id)
@@ -1496,7 +1515,7 @@ struct LivePlaceholderScreen: View {
             TextField("STT model", text: $manager.modelID)
                 .textFieldStyle(.roundedBorder)
 
-            HStack(spacing: 12) {
+            AdaptiveButtonRow {
                 Picker("Backend", selection: $manager.backend) {
                     ForEach(InferenceBackend.allCases, id: \.self) { option in
                         Text(option.rawValue).tag(option)
@@ -1520,7 +1539,7 @@ struct LivePlaceholderScreen: View {
             .frame(maxWidth: 260)
             presetDetailsView(for: SpeechCatalog.preset(for: manager.modelID))
 
-            HStack(spacing: 12) {
+            AdaptiveButtonRow {
                 Picker("Action", selection: $manager.actionMode) {
                     ForEach(LiveActionMode.allCases, id: \.self) { mode in
                         Text(mode.rawValue).tag(mode)
@@ -1630,7 +1649,7 @@ struct LibraryScreen: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            HStack {
+            AdaptiveButtonRow {
                 Text("Jobs")
                     .font(.title2.bold())
                 Spacer()
@@ -1660,7 +1679,7 @@ struct LibraryScreen: View {
                         Text("Audio: \(audioPath)")
                             .font(.caption2)
                     }
-                    HStack(spacing: 8) {
+                    AdaptiveButtonRow {
                         if let audioPath = job.outputRefs.audioPath {
                             Button(playingAudioPath == audioPath ? "Stop Audio" : "Play Audio") {
                                 toggleAudioPlayback(path: audioPath)
@@ -1806,7 +1825,7 @@ struct SettingsScreen: View {
                         Text(voice.label).tag(voice.id)
                     }
                 }
-                HStack {
+                AdaptiveButtonRow {
                     Button("Preview Voice") {
                         previewSelectedVoice()
                     }
@@ -1916,7 +1935,7 @@ struct SettingsScreen: View {
                 }
                 TextField("Template name", text: $webhookTemplateDraft.name)
                 TextField("Template URL", text: $webhookTemplateDraft.url)
-                HStack {
+                AdaptiveButtonRow {
                     Button(webhookTemplateDraft.id == nil ? "Add Template" : "Update Template") {
                         let template = SavedWebhookTemplate(
                             id: webhookTemplateDraft.id ?? UUID(),
@@ -1944,7 +1963,7 @@ struct SettingsScreen: View {
                 Text("Status: \(store.telegramRelayStatus)")
                     .font(.caption)
                     .foregroundStyle(store.isTelegramRelayRunning ? .green : .secondary)
-                HStack {
+                AdaptiveButtonRow {
                     Button(store.isTelegramRelayRunning ? "Restart Relay" : "Start Relay") {
                         store.startTelegramRelay()
                     }

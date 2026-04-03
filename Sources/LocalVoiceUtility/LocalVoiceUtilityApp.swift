@@ -14,8 +14,9 @@ struct LocalVoiceUtilityApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(store)
-                .frame(minWidth: 980, minHeight: 640)
+                .frame(minWidth: 1280, minHeight: 820)
         }
+        .defaultSize(width: 1440, height: 920)
     }
 }
 
