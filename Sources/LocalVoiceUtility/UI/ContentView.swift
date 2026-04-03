@@ -104,6 +104,19 @@ private enum VisualResultAction: String, CaseIterable {
     case webhook = "POST Webhook"
 }
 
+private struct WebhookTemplate: Identifiable, Hashable {
+    let id: String
+    let title: String
+    let urlTemplate: String
+}
+
+private struct BatchScannedPDFResult: Identifiable, Hashable {
+    let id = UUID()
+    let pdfPath: String
+    let transcriptPath: String
+    let audioPath: String
+}
+
 private let visualPresets: [VisualPreset] = [
     .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false),
     .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false),
@@ -111,6 +124,12 @@ private let visualPresets: [VisualPreset] = [
     .init(id: "mlx-community/granite-4.0-vision-2b-4bit", title: "Granite 4.0 Vision", summary: "Updated vision reasoning", bestForOCR: false),
     .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true),
     .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading", bestForOCR: true),
+]
+
+private let webhookTemplates: [WebhookTemplate] = [
+    .init(id: "custom", title: "Custom", urlTemplate: ""),
+    .init(id: "telegram-local", title: "Telegram relay (local)", urlTemplate: "http://127.0.0.1:8787/telegram/message"),
+    .init(id: "generic-local", title: "Generic local webhook", urlTemplate: "http://127.0.0.1:8787/live"),
 ]
 
 struct VisualAnalysisScreen: View {
@@ -133,7 +152,9 @@ struct VisualAnalysisScreen: View {
     @State private var systemVoices: [VoiceOption] = []
     @State private var narrationPlayer: AVAudioPlayer?
     @State private var resultAction: VisualResultAction = .none
+    @State private var selectedWebhookTemplateID = "custom"
     @State private var webhookURL = ""
+    @State private var additionalContext = ""
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -207,6 +228,14 @@ struct VisualAnalysisScreen: View {
                         .lineLimit(4, reservesSpace: true)
                     TextField("Max tokens", text: $maxTokens)
                     Text("Repo path: \(store.settings.pythonMLXVLMRepoPath)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+
+                Section("Additional Context") {
+                    TextField("Transcript, notes, or audio context to include with the analysis prompt", text: $additionalContext, axis: .vertical)
+                        .lineLimit(4, reservesSpace: true)
+                    Text("Use this to combine what is on screen with meeting notes, transcript text, or related audio context.")
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
@@ -291,6 +320,11 @@ struct VisualAnalysisScreen: View {
                         }
                     }
                     if resultAction == .webhook {
+                        Picker("Webhook template", selection: $selectedWebhookTemplateID) {
+                            ForEach(webhookTemplates) { template in
+                                Text(template.title).tag(template.id)
+                            }
+                        }
                         TextField("Webhook URL", text: $webhookURL)
                     }
                     HStack {
@@ -315,6 +349,7 @@ struct VisualAnalysisScreen: View {
             narrationLanguageCode = store.settings.preferredReaderLanguage
             narrationVoiceIdentifier = store.settings.ttsDefaults.voiceIdentifier ?? ""
             systemVoices = availableSystemVoices()
+            selectedWebhookTemplateID = webhookTemplates.first?.id ?? "custom"
             if let latest = store.latestVisualAnalysis {
                 resultText = latest.text
                 outputPath = latest.outputPath
@@ -324,6 +359,11 @@ struct VisualAnalysisScreen: View {
         }
         .onChange(of: workflow) { _, _ in
             applyWorkflowDefaults(resetPromptOnly: false)
+        }
+        .onChange(of: selectedWebhookTemplateID) { _, newValue in
+            if let template = webhookTemplates.first(where: { $0.id == newValue }), !template.urlTemplate.isEmpty {
+                webhookURL = template.urlTemplate
+            }
         }
     }
 
@@ -403,7 +443,7 @@ struct VisualAnalysisScreen: View {
                     options: VisualAnalysisOptions(
                         modelId: modelID,
                         workflow: workflow,
-                        prompt: prompt,
+                        prompt: combinedPrompt(),
                         maxTokens: tokenCount,
                         processAllPDFPages: store.settings.visualDefaults.processAllPDFPages,
                         pythonRepoPath: store.settings.pythonMLXVLMRepoPath
@@ -498,6 +538,12 @@ struct VisualAnalysisScreen: View {
         }
     }
 
+    private func combinedPrompt() -> String {
+        let context = additionalContext.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !context.isEmpty else { return prompt }
+        return "\(prompt)\n\nAdditional transcript/audio context:\n\(context)"
+    }
+
     private func performResultAction() async {
         let text = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -537,6 +583,8 @@ struct VisualAnalysisScreen: View {
 struct ScannedPDFToAudioScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedPDF: URL?
+    @State private var selectedPDFs: [URL] = []
+    @State private var batchMode = false
     @State private var isRunning = false
     @State private var ocrWorkflow: VisualAnalysisWorkflow = .ocrPlainText
     @State private var ocrModelID = "mlx-community/falcon-ocr-3b-4bit"
@@ -548,6 +596,7 @@ struct ScannedPDFToAudioScreen: View {
     @State private var transcriptPath: String?
     @State private var audioPath: String?
     @State private var audioPlayer: AVAudioPlayer?
+    @State private var batchResults: [BatchScannedPDFResult] = []
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -558,19 +607,30 @@ struct ScannedPDFToAudioScreen: View {
 
             Form {
                 Section("Input") {
-                    Text(selectedPDF?.path ?? "No PDF selected")
+                    Toggle("Batch mode", isOn: $batchMode)
+                    Text(batchMode ? batchInputSummary : (selectedPDF?.path ?? "No PDF selected"))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                     HStack {
-                        Button("Select PDF") {
+                        Button(batchMode ? "Select PDFs" : "Select PDF") {
                             let panel = NSOpenPanel()
                             panel.allowedContentTypes = [.pdf]
-                            panel.allowsMultipleSelection = false
+                            panel.allowsMultipleSelection = batchMode
                             if panel.runModal() == .OK {
-                                selectedPDF = panel.url
+                                if batchMode {
+                                    selectedPDFs = panel.urls
+                                    selectedPDF = selectedPDFs.first
+                                } else {
+                                    selectedPDF = panel.url
+                                    selectedPDFs = panel.url.map { [$0] } ?? []
+                                }
                             }
                         }
-                        if let selectedPDF {
+                        if batchMode, !selectedPDFs.isEmpty {
+                            Button("Reveal PDFs") {
+                                NSWorkspace.shared.activateFileViewerSelecting(selectedPDFs)
+                            }
+                        } else if let selectedPDF {
                             Button("Reveal PDF") {
                                 NSWorkspace.shared.activateFileViewerSelecting([selectedPDF])
                             }
@@ -611,11 +671,11 @@ struct ScannedPDFToAudioScreen: View {
             }
 
             HStack(spacing: 12) {
-                Button(isRunning ? "Processing..." : "Extract OCR and Generate Audio") {
+                Button(isRunning ? "Processing..." : (batchMode ? "Process Batch" : "Extract OCR and Generate Audio")) {
                     runScannedPDFWorkflow()
                 }
                 .buttonStyle(.borderedProminent)
-                .disabled(isRunning || selectedPDF == nil)
+                .disabled(isRunning || activePDFInputs.isEmpty)
 
                 if let transcriptPath {
                     Button("Open OCR Text") {
@@ -639,6 +699,24 @@ struct ScannedPDFToAudioScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: .infinity)
+
+            if batchMode, !batchResults.isEmpty {
+                GroupBox("Batch Results") {
+                    List(batchResults) { result in
+                        HStack {
+                            Text(URL(fileURLWithPath: result.pdfPath).lastPathComponent)
+                            Spacer()
+                            Button("OCR Text") {
+                                NSWorkspace.shared.open(URL(fileURLWithPath: result.transcriptPath))
+                            }
+                            Button("Audio") {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: result.audioPath)])
+                            }
+                        }
+                    }
+                    .frame(minHeight: 160)
+                }
+            }
         }
         .padding(24)
         .onAppear {
@@ -649,36 +727,50 @@ struct ScannedPDFToAudioScreen: View {
     }
 
     private func runScannedPDFWorkflow() {
-        guard let selectedPDF else { return }
+        let inputs = activePDFInputs
+        guard !inputs.isEmpty else { return }
         isRunning = true
+        batchResults = []
         Task { @MainActor in
             defer { isRunning = false }
             do {
-                let analysis = try await store.runVisualAnalysis(
-                    inputURL: selectedPDF,
-                    options: VisualAnalysisOptions(
-                        modelId: ocrModelID,
-                        workflow: ocrWorkflow,
-                        prompt: ocrWorkflow.defaultPrompt,
-                        maxTokens: ocrWorkflow == .ocrStructured ? 1500 : 1200,
-                        processAllPDFPages: true,
-                        pythonRepoPath: store.settings.pythonMLXVLMRepoPath
+                for input in inputs {
+                    let analysis = try await store.runVisualAnalysis(
+                        inputURL: input,
+                        options: VisualAnalysisOptions(
+                            modelId: ocrModelID,
+                            workflow: ocrWorkflow,
+                            prompt: ocrWorkflow.defaultPrompt,
+                            maxTokens: ocrWorkflow == .ocrStructured ? 1500 : 1200,
+                            processAllPDFPages: true,
+                            pythonRepoPath: store.settings.pythonMLXVLMRepoPath
+                        )
                     )
-                )
-                extractedText = analysis.text
-                transcriptPath = analysis.outputPath
-                audioPath = try await store.runTextToAudio(
-                    text: analysis.text,
-                    options: TTSOptions(
-                        modelId: readModelID,
-                        outputFormat: "wav",
-                        voiceIdentifier: readVoiceIdentifier.isEmpty ? nil : readVoiceIdentifier,
-                        languageCode: readLanguageCode,
-                        backend: .automatic,
-                        pythonRepoPath: store.settings.pythonMLXRepoPath
+                    let generatedAudioPath = try await store.runTextToAudio(
+                        text: analysis.text,
+                        options: TTSOptions(
+                            modelId: readModelID,
+                            outputFormat: "wav",
+                            voiceIdentifier: readVoiceIdentifier.isEmpty ? nil : readVoiceIdentifier,
+                            languageCode: readLanguageCode,
+                            backend: .automatic,
+                            pythonRepoPath: store.settings.pythonMLXRepoPath
+                        )
                     )
-                )
-                if let audioPath {
+
+                    extractedText = analysis.text
+                    transcriptPath = analysis.outputPath
+                    audioPath = generatedAudioPath
+                    batchResults.append(
+                        BatchScannedPDFResult(
+                            pdfPath: input.path,
+                            transcriptPath: analysis.outputPath,
+                            audioPath: generatedAudioPath
+                        )
+                    )
+                }
+
+                if !batchMode, let audioPath {
                     toggleAudioPlayback(path: audioPath)
                 }
             } catch {
@@ -702,6 +794,16 @@ struct ScannedPDFToAudioScreen: View {
             store.latestError = error.localizedDescription
             audioPlayer = nil
         }
+    }
+
+    private var activePDFInputs: [URL] {
+        batchMode ? selectedPDFs : (selectedPDF.map { [$0] } ?? [])
+    }
+
+    private var batchInputSummary: String {
+        if selectedPDFs.isEmpty { return "No PDFs selected" }
+        if selectedPDFs.count == 1 { return selectedPDFs[0].path }
+        return "\(selectedPDFs.count) PDFs selected"
     }
 }
 
