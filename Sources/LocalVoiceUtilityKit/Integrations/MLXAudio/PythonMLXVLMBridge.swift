@@ -1,4 +1,5 @@
 import Foundation
+import CoreGraphics
 
 public enum VisualAnalysisWorkflow: String, Codable, CaseIterable, Sendable {
     case general
@@ -34,6 +35,7 @@ public struct VisualAnalysisOptions: Codable, Sendable {
     public var workflow: VisualAnalysisWorkflow
     public var prompt: String
     public var maxTokens: Int
+    public var processAllPDFPages: Bool
     public var pythonRepoPath: String
 
     public init(
@@ -41,12 +43,14 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         workflow: VisualAnalysisWorkflow = .general,
         prompt: String = VisualAnalysisWorkflow.general.defaultPrompt,
         maxTokens: Int = 300,
+        processAllPDFPages: Bool = false,
         pythonRepoPath: String = PythonMLXVLMBridge.defaultRepoPath
     ) {
         self.modelId = modelId
         self.workflow = workflow
         self.prompt = prompt
         self.maxTokens = maxTokens
+        self.processAllPDFPages = processAllPDFPages
         self.pythonRepoPath = pythonRepoPath
     }
 
@@ -55,6 +59,7 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         case workflow
         case prompt
         case maxTokens
+        case processAllPDFPages
         case pythonRepoPath
     }
 
@@ -64,6 +69,7 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         workflow = try container.decodeIfPresent(VisualAnalysisWorkflow.self, forKey: .workflow) ?? .general
         prompt = try container.decodeIfPresent(String.self, forKey: .prompt) ?? workflow.defaultPrompt
         maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 300
+        processAllPDFPages = try container.decodeIfPresent(Bool.self, forKey: .processAllPDFPages) ?? false
         pythonRepoPath = try container.decodeIfPresent(String.self, forKey: .pythonRepoPath) ?? PythonMLXVLMBridge.defaultRepoPath
     }
 
@@ -73,6 +79,7 @@ public struct VisualAnalysisOptions: Codable, Sendable {
         try container.encode(workflow, forKey: .workflow)
         try container.encode(prompt, forKey: .prompt)
         try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(processAllPDFPages, forKey: .processAllPDFPages)
         try container.encode(pythonRepoPath, forKey: .pythonRepoPath)
     }
 }
@@ -100,14 +107,96 @@ public enum PythonMLXVLMBridge {
     ) async throws -> VisualAnalysisResult {
         let repoPath = normalizedRepoPath(options.pythonRepoPath)
         let invocation = try resolvedInvocation(repoPath: repoPath)
-        let renderedInputURL = try renderedInputURL(for: inputURL, outputDirectory: outputDirectory)
+        let renderedInputURLs = try renderedInputURLs(for: inputURL, options: options, outputDirectory: outputDirectory)
         let outputURL = outputDirectory.appendingPathComponent("visual-analysis-\(UUID().uuidString).txt")
 
+        var pageOutputs: [String] = []
+        for (index, renderedInputURL) in renderedInputURLs.enumerated() {
+            let prompt = renderedInputURLs.count > 1
+                ? "\(options.prompt)\n\nThis is page \(index + 1) of \(renderedInputURLs.count)."
+                : options.prompt
+            let output = try runGeneration(
+                invocation: invocation,
+                repoPath: repoPath,
+                modelId: options.modelId,
+                prompt: prompt,
+                maxTokens: options.maxTokens,
+                imagePath: renderedInputURL.path
+            )
+            let labeledOutput = renderedInputURLs.count > 1 ? "Page \(index + 1)\n\(output)" : output
+            pageOutputs.append(labeledOutput)
+        }
+
+        let combinedOutput = pageOutputs.joined(separator: "\n\n---\n\n")
+        try combinedOutput.write(to: outputURL, atomically: true, encoding: .utf8)
+        return VisualAnalysisResult(
+            text: combinedOutput,
+            outputPath: outputURL.path,
+            renderedInputPath: renderedInputURLs.first?.path ?? inputURL.path
+        )
+    }
+
+
+    public static func captureInteractiveScreenshot(outputDirectory: URL) async throws -> URL {
+        try captureWithScreencapture(arguments: ["-i", "-x"], outputDirectory: outputDirectory)
+    }
+
+    public static func captureFullScreen(outputDirectory: URL) async throws -> URL {
+        try captureWithScreencapture(arguments: ["-x"], outputDirectory: outputDirectory)
+    }
+
+    public static func captureFrontmostWindow(outputDirectory: URL) async throws -> URL {
+        guard let windowID = frontmostWindowID() else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: 8,
+                userInfo: [NSLocalizedDescriptionKey: "Could not determine the frontmost window. Bring the target app forward and try again."]
+            )
+        }
+        return try captureWithScreencapture(arguments: ["-l", String(windowID), "-x"], outputDirectory: outputDirectory)
+    }
+
+    private static func captureWithScreencapture(arguments: [String], outputDirectory: URL) throws -> URL {
+        let outputURL = outputDirectory.appendingPathComponent("visual-screenshot-\(UUID().uuidString).png")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = arguments + [outputURL.path]
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Screenshot capture was canceled or failed."]
+            )
+        }
+
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "No screenshot was captured."]
+            )
+        }
+        return outputURL
+    }
+
+    private static func runGeneration(
+        invocation: (executable: String, arguments: [String]),
+        repoPath: String,
+        modelId: String,
+        prompt: String,
+        maxTokens: Int,
+        imagePath: String
+    ) throws -> String {
         let arguments = invocation.arguments + [
-            "--model", options.modelId,
-            "--max-tokens", String(options.maxTokens),
-            "--prompt", options.prompt,
-            "--image", renderedInputURL.path,
+            "--model", modelId,
+            "--max-tokens", String(maxTokens),
+            "--prompt", prompt,
+            "--image", imagePath,
         ]
 
         let process = Process()
@@ -142,38 +231,7 @@ public enum PythonMLXVLMBridge {
                 userInfo: [NSLocalizedDescriptionKey: errorOutput.isEmpty ? "mlx-vlm returned no output." : errorOutput]
             )
         }
-
-        try output.write(to: outputURL, atomically: true, encoding: .utf8)
-        return VisualAnalysisResult(text: output, outputPath: outputURL.path, renderedInputPath: renderedInputURL.path)
-    }
-
-
-    public static func captureInteractiveScreenshot(outputDirectory: URL) async throws -> URL {
-        let outputURL = outputDirectory.appendingPathComponent("visual-screenshot-\(UUID().uuidString).png")
-
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
-        process.arguments = ["-i", "-x", outputURL.path]
-
-        try process.run()
-        process.waitUntilExit()
-
-        guard process.terminationStatus == 0 else {
-            throw NSError(
-                domain: "PythonMLXVLMBridge",
-                code: 6,
-                userInfo: [NSLocalizedDescriptionKey: "Screenshot capture was canceled or failed."]
-            )
-        }
-
-        guard FileManager.default.fileExists(atPath: outputURL.path) else {
-            throw NSError(
-                domain: "PythonMLXVLMBridge",
-                code: 7,
-                userInfo: [NSLocalizedDescriptionKey: "No screenshot was captured."]
-            )
-        }
-        return outputURL
+        return output
     }
 
     private static func normalizedRepoPath(_ path: String) -> String {
@@ -208,15 +266,18 @@ public enum PythonMLXVLMBridge {
         )
     }
 
-    private static func renderedInputURL(for inputURL: URL, outputDirectory: URL) throws -> URL {
+    private static func renderedInputURLs(for inputURL: URL, options: VisualAnalysisOptions, outputDirectory: URL) throws -> [URL] {
         let ext = inputURL.pathExtension.lowercased()
         if ["png", "jpg", "jpeg", "webp", "heic", "gif", "bmp", "tiff"].contains(ext) {
-            return inputURL
+            return [inputURL]
         }
 
         #if canImport(PDFKit)
         if ext == "pdf" {
-            return try renderFirstPDFPage(inputURL: inputURL, outputDirectory: outputDirectory)
+            if options.processAllPDFPages {
+                return try renderAllPDFPages(inputURL: inputURL, outputDirectory: outputDirectory)
+            }
+            return [try renderFirstPDFPage(inputURL: inputURL, outputDirectory: outputDirectory)]
         }
         #endif
 
@@ -230,7 +291,6 @@ public enum PythonMLXVLMBridge {
 
 #if canImport(PDFKit)
 import PDFKit
-import CoreGraphics
 #if canImport(AppKit)
 import AppKit
 #endif
@@ -253,5 +313,60 @@ private extension PythonMLXVLMBridge {
         try pngData.write(to: renderedURL, options: .atomic)
         return renderedURL
     }
+
+    static func renderAllPDFPages(inputURL: URL, outputDirectory: URL) throws -> [URL] {
+        guard let document = PDFDocument(url: inputURL), document.pageCount > 0 else {
+            throw NSError(domain: "PythonMLXVLMBridge", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not open PDF."])
+        }
+
+        return try (0..<document.pageCount).map { index in
+            guard let page = document.page(at: index) else {
+                throw NSError(domain: "PythonMLXVLMBridge", code: 4, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page \(index + 1)."])
+            }
+            let bounds = page.bounds(for: .mediaBox)
+            let imageRep = page.thumbnail(of: CGSize(width: max(1200, bounds.width), height: max(1600, bounds.height)), for: .mediaBox)
+            guard let tiff = imageRep.tiffRepresentation,
+                  let bitmap = NSBitmapImageRep(data: tiff),
+                  let pngData = bitmap.representation(using: .png, properties: [:]) else {
+                throw NSError(domain: "PythonMLXVLMBridge", code: 5, userInfo: [NSLocalizedDescriptionKey: "Could not render PDF page \(index + 1)."])
+            }
+            let renderedURL = outputDirectory.appendingPathComponent("visual-input-\(UUID().uuidString)-page-\(index + 1).png")
+            try pngData.write(to: renderedURL, options: .atomic)
+            return renderedURL
+        }
+    }
 }
 #endif
+
+private extension PythonMLXVLMBridge {
+    static func frontmostWindowID() -> Int? {
+        #if canImport(AppKit)
+        guard let app = NSWorkspace.shared.frontmostApplication else { return nil }
+        let targetPID = app.processIdentifier
+        guard let windowInfo = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+
+        let candidate = windowInfo
+            .filter { info in
+                guard let pid = info[kCGWindowOwnerPID as String] as? pid_t, pid == targetPID else { return false }
+                guard let layer = info[kCGWindowLayer as String] as? Int, layer == 0 else { return false }
+                guard let bounds = info[kCGWindowBounds as String] as? [String: Any],
+                      let width = bounds["Width"] as? Double,
+                      let height = bounds["Height"] as? Double else { return false }
+                return width > 0 && height > 0
+            }
+            .max { lhs, rhs in
+                let lhsBounds = lhs[kCGWindowBounds as String] as? [String: Any]
+                let rhsBounds = rhs[kCGWindowBounds as String] as? [String: Any]
+                let lhsArea = ((lhsBounds?["Width"] as? Double) ?? 0) * ((lhsBounds?["Height"] as? Double) ?? 0)
+                let rhsArea = ((rhsBounds?["Width"] as? Double) ?? 0) * ((rhsBounds?["Height"] as? Double) ?? 0)
+                return lhsArea < rhsArea
+            }
+
+        return candidate?[kCGWindowNumber as String] as? Int
+        #else
+        return nil
+        #endif
+    }
+}

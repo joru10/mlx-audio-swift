@@ -187,6 +187,14 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
         try await PythonMLXVLMBridge.captureInteractiveScreenshot(outputDirectory: paths.outputsDirectory)
     }
 
+    public func captureFullScreenScreenshot() async throws -> URL {
+        try await PythonMLXVLMBridge.captureFullScreen(outputDirectory: paths.outputsDirectory)
+    }
+
+    public func captureFrontmostWindowScreenshot() async throws -> URL {
+        try await PythonMLXVLMBridge.captureFrontmostWindow(outputDirectory: paths.outputsDirectory)
+    }
+
     public func runTextToAudioNow(
         text: String,
         options: TTSOptions

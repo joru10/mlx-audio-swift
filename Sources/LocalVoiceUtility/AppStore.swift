@@ -145,6 +145,14 @@ final class AppStore: ObservableObject {
         try await coordinator.captureInteractiveScreenshot()
     }
 
+    func captureFullScreenScreenshot() async throws -> URL {
+        try await coordinator.captureFullScreenScreenshot()
+    }
+
+    func captureFrontmostWindowScreenshot() async throws -> URL {
+        try await coordinator.captureFrontmostWindowScreenshot()
+    }
+
     func runTextToAudio(text: String, options: TTSOptions) async throws -> String {
         var resolved = options
         resolved.voiceIdentifier = resolveVoiceIdentifier(for: resolved.modelId, explicitVoice: resolved.voiceIdentifier)

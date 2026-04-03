@@ -143,11 +143,26 @@ struct VisualAnalysisScreen: View {
                             captureScreenshot()
                         }
                         .disabled(isCapturingScreenshot)
+                        Button("Front Window") {
+                            captureFrontWindow()
+                        }
+                        .disabled(isCapturingScreenshot)
+                        Button("Full Screen") {
+                            captureFullScreen()
+                        }
+                        .disabled(isCapturingScreenshot)
                         if let selectedInput {
                             Button("Reveal Input") {
                                 NSWorkspace.shared.activateFileViewerSelecting([selectedInput])
                             }
                         }
+                    }
+                    if selectedInput?.pathExtension.lowercased() == "pdf" {
+                        Toggle("Process all PDF pages", isOn: Binding(
+                            get: { store.settings.visualDefaults.processAllPDFPages },
+                            set: { store.settings.visualDefaults.processAllPDFPages = $0 }
+                        ))
+                        .toggleStyle(.switch)
                     }
                 }
 
@@ -159,7 +174,7 @@ struct VisualAnalysisScreen: View {
                     }
                     HStack {
                         Button("Use Suggested Prompt") {
-                            prompt = workflow.defaultPrompt
+                            applyWorkflowDefaults(resetPromptOnly: true)
                         }
                         if workflow == .ocrPlainText || workflow == .ocrStructured {
                             Text("OCR models are listed first for this mode.")
@@ -273,6 +288,9 @@ struct VisualAnalysisScreen: View {
             }
             narrationPath = store.latestVisualNarrationPath
         }
+        .onChange(of: workflow) { _, _ in
+            applyWorkflowDefaults(resetPromptOnly: false)
+        }
     }
 
     private func pickVisualInput() {
@@ -300,6 +318,38 @@ struct VisualAnalysisScreen: View {
         }
     }
 
+    private func captureFrontWindow() {
+        isCapturingScreenshot = true
+        Task { @MainActor in
+            do {
+                selectedInput = try await store.captureFrontmostWindowScreenshot()
+                if workflow == .general {
+                    workflow = .screenSummary
+                }
+                applyWorkflowDefaults(resetPromptOnly: true)
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+            isCapturingScreenshot = false
+        }
+    }
+
+    private func captureFullScreen() {
+        isCapturingScreenshot = true
+        Task { @MainActor in
+            do {
+                selectedInput = try await store.captureFullScreenScreenshot()
+                if workflow == .general {
+                    workflow = .screenSummary
+                }
+                applyWorkflowDefaults(resetPromptOnly: true)
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+            isCapturingScreenshot = false
+        }
+    }
+
     private func runAnalysis() {
         guard let selectedInput, let tokenCount = Int(maxTokens.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
         isRunning = true
@@ -310,6 +360,7 @@ struct VisualAnalysisScreen: View {
                     workflow: workflow,
                     prompt: prompt,
                     maxTokens: tokenCount,
+                    processAllPDFPages: store.settings.visualDefaults.processAllPDFPages,
                     pythonRepoPath: store.settings.pythonMLXVLMRepoPath
                 )
                 store.saveSettings()
@@ -320,6 +371,7 @@ struct VisualAnalysisScreen: View {
                         workflow: workflow,
                         prompt: prompt,
                         maxTokens: tokenCount,
+                        processAllPDFPages: store.settings.visualDefaults.processAllPDFPages,
                         pythonRepoPath: store.settings.pythonMLXVLMRepoPath
                     )
                 )
@@ -388,6 +440,27 @@ struct VisualAnalysisScreen: View {
             }
         case .general, .screenSummary:
             return visualPresets
+        }
+    }
+
+    private func applyWorkflowDefaults(resetPromptOnly: Bool) {
+        prompt = workflow.defaultPrompt
+        switch workflow {
+        case .ocrPlainText:
+            maxTokens = "1200"
+        case .ocrStructured:
+            maxTokens = "1500"
+        case .general, .screenSummary:
+            maxTokens = "300"
+        }
+        if !resetPromptOnly {
+            if (workflow == .ocrPlainText || workflow == .ocrStructured),
+               let ocrPreset = visualPresets.first(where: { $0.bestForOCR }) {
+                modelID = ocrPreset.id
+            } else if workflow == .screenSummary,
+                      let screenPreset = visualPresets.first(where: { $0.id == "mlx-community/granite-4.0-vision-2b-4bit" }) {
+                modelID = screenPreset.id
+            }
         }
     }
 }
@@ -1131,6 +1204,7 @@ struct SettingsScreen: View {
                         Text(workflow.displayName).tag(workflow)
                     }
                 }
+                Toggle("Default to all PDF pages", isOn: $store.settings.visualDefaults.processAllPDFPages)
                 Picker("Default visual model", selection: $store.settings.visualDefaults.modelId) {
                     ForEach(visualPresets) { preset in
                         Text("\(preset.title) — \(preset.summary)").tag(preset.id)
@@ -1142,7 +1216,7 @@ struct SettingsScreen: View {
                 TextField("Default visual prompt", text: $store.settings.visualDefaults.prompt, axis: .vertical)
                     .lineLimit(3, reservesSpace: true)
                 TextField("VLM repo path", text: $store.settings.pythonMLXVLMRepoPath)
-                Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment. OCR workflows pair best with Falcon OCR and DeepSeek OCR.")
+                Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment. OCR workflows pair best with Falcon OCR and DeepSeek OCR, and all-page PDF processing is intended for scanned documents.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
