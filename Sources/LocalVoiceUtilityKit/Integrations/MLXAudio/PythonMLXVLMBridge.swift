@@ -1,21 +1,79 @@
 import Foundation
 
+public enum VisualAnalysisWorkflow: String, Codable, CaseIterable, Sendable {
+    case general
+    case ocrPlainText
+    case ocrStructured
+    case screenSummary
+
+    public var displayName: String {
+        switch self {
+        case .general: return "General"
+        case .ocrPlainText: return "OCR Plain Text"
+        case .ocrStructured: return "OCR Structured"
+        case .screenSummary: return "Screen Summary"
+        }
+    }
+
+    public var defaultPrompt: String {
+        switch self {
+        case .general:
+            return "Describe this image in detail."
+        case .ocrPlainText:
+            return "Extract the visible text exactly as written. Preserve paragraphs and line breaks where possible."
+        case .ocrStructured:
+            return "Extract the visible text and return a structured summary with headings, key fields, tables, and notable values."
+        case .screenSummary:
+            return "Summarize what is on this screen, the main UI sections, important text, and the likely next actions for the user."
+        }
+    }
+}
+
 public struct VisualAnalysisOptions: Codable, Sendable {
     public var modelId: String
+    public var workflow: VisualAnalysisWorkflow
     public var prompt: String
     public var maxTokens: Int
     public var pythonRepoPath: String
 
     public init(
         modelId: String = "mlx-community/Qwen2-VL-2B-Instruct-4bit",
-        prompt: String = "Describe this image in detail.",
+        workflow: VisualAnalysisWorkflow = .general,
+        prompt: String = VisualAnalysisWorkflow.general.defaultPrompt,
         maxTokens: Int = 300,
         pythonRepoPath: String = PythonMLXVLMBridge.defaultRepoPath
     ) {
         self.modelId = modelId
+        self.workflow = workflow
         self.prompt = prompt
         self.maxTokens = maxTokens
         self.pythonRepoPath = pythonRepoPath
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case modelId
+        case workflow
+        case prompt
+        case maxTokens
+        case pythonRepoPath
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        modelId = try container.decodeIfPresent(String.self, forKey: .modelId) ?? "mlx-community/Qwen2-VL-2B-Instruct-4bit"
+        workflow = try container.decodeIfPresent(VisualAnalysisWorkflow.self, forKey: .workflow) ?? .general
+        prompt = try container.decodeIfPresent(String.self, forKey: .prompt) ?? workflow.defaultPrompt
+        maxTokens = try container.decodeIfPresent(Int.self, forKey: .maxTokens) ?? 300
+        pythonRepoPath = try container.decodeIfPresent(String.self, forKey: .pythonRepoPath) ?? PythonMLXVLMBridge.defaultRepoPath
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(modelId, forKey: .modelId)
+        try container.encode(workflow, forKey: .workflow)
+        try container.encode(prompt, forKey: .prompt)
+        try container.encode(maxTokens, forKey: .maxTokens)
+        try container.encode(pythonRepoPath, forKey: .pythonRepoPath)
     }
 }
 
@@ -87,6 +145,35 @@ public enum PythonMLXVLMBridge {
 
         try output.write(to: outputURL, atomically: true, encoding: .utf8)
         return VisualAnalysisResult(text: output, outputPath: outputURL.path, renderedInputPath: renderedInputURL.path)
+    }
+
+
+    public static func captureInteractiveScreenshot(outputDirectory: URL) async throws -> URL {
+        let outputURL = outputDirectory.appendingPathComponent("visual-screenshot-\(UUID().uuidString).png")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-i", "-x", outputURL.path]
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: 6,
+                userInfo: [NSLocalizedDescriptionKey: "Screenshot capture was canceled or failed."]
+            )
+        }
+
+        guard FileManager.default.fileExists(atPath: outputURL.path) else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: 7,
+                userInfo: [NSLocalizedDescriptionKey: "No screenshot was captured."]
+            )
+        }
+        return outputURL
     }
 
     private static func normalizedRepoPath(_ path: String) -> String {

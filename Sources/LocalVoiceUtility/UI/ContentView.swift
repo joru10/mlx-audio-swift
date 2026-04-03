@@ -91,33 +91,43 @@ private struct VisualPreset: Identifiable, Hashable {
     let id: String
     let title: String
     let summary: String
+    let bestForOCR: Bool
 }
 
 private let visualPresets: [VisualPreset] = [
-    .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding"),
-    .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model"),
-    .init(id: "mlx-community/granite-vision-3.2-2b-4bit", title: "Granite Vision 3.2", summary: "Compact document and image reasoning"),
-    .init(id: "mlx-community/granite-4.0-vision-2b-4bit", title: "Granite 4.0 Vision", summary: "Updated vision reasoning"),
-    .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction"),
-    .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading"),
+    .init(id: "mlx-community/Qwen2-VL-2B-Instruct-4bit", title: "Qwen2-VL 2B", summary: "General image understanding", bestForOCR: false),
+    .init(id: "mlx-community/gemma-3n-E2B-it-4bit", title: "Gemma 3n E2B", summary: "Image + audio capable omni model", bestForOCR: false),
+    .init(id: "mlx-community/granite-vision-3.2-2b-4bit", title: "Granite Vision 3.2", summary: "Compact document and image reasoning", bestForOCR: false),
+    .init(id: "mlx-community/granite-4.0-vision-2b-4bit", title: "Granite 4.0 Vision", summary: "Updated vision reasoning", bestForOCR: false),
+    .init(id: "mlx-community/falcon-ocr-3b-4bit", title: "Falcon OCR", summary: "OCR-oriented extraction", bestForOCR: true),
+    .init(id: "mlx-community/deepseek-ocr-2-4bit", title: "DeepSeek OCR 2", summary: "Structured OCR and layout reading", bestForOCR: true),
 ]
 
 struct VisualAnalysisScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedInput: URL?
+    @State private var workflow: VisualAnalysisWorkflow = .general
     @State private var modelID = VisualAnalysisOptions().modelId
     @State private var prompt = VisualAnalysisOptions().prompt
     @State private var maxTokens = "300"
     @State private var isRunning = false
+    @State private var isCapturingScreenshot = false
+    @State private var isNarrating = false
     @State private var resultText = ""
     @State private var outputPath: String?
     @State private var renderedInputPath: String?
+    @State private var narrationPath: String?
+    @State private var narrationModelID = TTSOptions().modelId
+    @State private var narrationLanguageCode = TTSOptions().languageCode
+    @State private var narrationVoiceIdentifier = ""
+    @State private var systemVoices: [VoiceOption] = []
+    @State private var narrationPlayer: AVAudioPlayer?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             Text("Visual Analysis")
                 .font(.title2.bold())
-            Text("Analyze an image or the first page of a PDF using the local `mlx-vlm` environment.")
+            Text("Analyze an image, screenshot, or the first page of a PDF using the local `mlx-vlm` environment, then optionally read the result aloud.")
                 .foregroundStyle(.secondary)
 
             Form {
@@ -129,6 +139,10 @@ struct VisualAnalysisScreen: View {
                         Button("Select Image or PDF") {
                             pickVisualInput()
                         }
+                        Button(isCapturingScreenshot ? "Capturing..." : "Capture Screenshot") {
+                            captureScreenshot()
+                        }
+                        .disabled(isCapturingScreenshot)
                         if let selectedInput {
                             Button("Reveal Input") {
                                 NSWorkspace.shared.activateFileViewerSelecting([selectedInput])
@@ -137,9 +151,27 @@ struct VisualAnalysisScreen: View {
                     }
                 }
 
+                Section("Workflow") {
+                    Picker("Mode", selection: $workflow) {
+                        ForEach(VisualAnalysisWorkflow.allCases, id: \.self) { option in
+                            Text(option.displayName).tag(option)
+                        }
+                    }
+                    HStack {
+                        Button("Use Suggested Prompt") {
+                            prompt = workflow.defaultPrompt
+                        }
+                        if workflow == .ocrPlainText || workflow == .ocrStructured {
+                            Text("OCR models are listed first for this mode.")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
                 Section("Model") {
                     Picker("Preset", selection: $modelID) {
-                        ForEach(visualPresets) { preset in
+                        ForEach(sortedVisualPresets) { preset in
                             Text("\(preset.title) — \(preset.summary)").tag(preset.id)
                         }
                     }
@@ -165,6 +197,11 @@ struct VisualAnalysisScreen: View {
                         NSWorkspace.shared.open(URL(fileURLWithPath: outputPath))
                     }
                 }
+                if let outputPath {
+                    Button("Reveal Result") {
+                        NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: outputPath)])
+                    }
+                }
                 if let renderedInputPath {
                     Button("Reveal Rendered Input") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: renderedInputPath)])
@@ -180,17 +217,61 @@ struct VisualAnalysisScreen: View {
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
             .frame(maxHeight: .infinity)
+
+            GroupBox("Readback") {
+                VStack(alignment: .leading, spacing: 10) {
+                    Picker("Reader model", selection: $narrationModelID) {
+                        ForEach(SpeechCatalog.ttsModels(for: .documentReader)) { preset in
+                            Text(presetMenuLabel(preset)).tag(preset.id)
+                        }
+                    }
+                    Picker("Reader language", selection: $narrationLanguageCode) {
+                        ForEach(SpeechCatalog.languageOptions(for: SpeechCatalog.preset(for: narrationModelID), allowAutoDetect: false)) { language in
+                            Text(language.label).tag(language.code)
+                        }
+                    }
+                    Picker("Reader voice", selection: $narrationVoiceIdentifier) {
+                        Text("System Default").tag("")
+                        ForEach(systemVoices, id: \.id) { voice in
+                            Text(voice.label).tag(voice.id)
+                        }
+                    }
+                    HStack {
+                        Button(isNarrating ? "Generating Audio..." : "Read Result Aloud") {
+                            narrateResult()
+                        }
+                        .buttonStyle(.borderedProminent)
+                        .disabled(isNarrating || resultText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                        if let narrationPath {
+                            Button(narrationPlayer?.isPlaying == true ? "Stop Playback" : "Play Narration") {
+                                toggleNarrationPlayback(path: narrationPath)
+                            }
+                            Button("Reveal Narration") {
+                                NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: narrationPath)])
+                            }
+                        }
+                    }
+                }
+                .padding(.top, 4)
+            }
         }
         .padding(24)
         .onAppear {
+            workflow = store.settings.visualDefaults.workflow
             modelID = store.settings.visualDefaults.modelId
             prompt = store.settings.visualDefaults.prompt
             maxTokens = String(store.settings.visualDefaults.maxTokens)
+            narrationModelID = store.settings.ttsDefaults.modelId
+            narrationLanguageCode = store.settings.preferredReaderLanguage
+            narrationVoiceIdentifier = store.settings.ttsDefaults.voiceIdentifier ?? ""
+            systemVoices = availableSystemVoices()
             if let latest = store.latestVisualAnalysis {
                 resultText = latest.text
                 outputPath = latest.outputPath
                 renderedInputPath = latest.renderedInputPath
             }
+            narrationPath = store.latestVisualNarrationPath
         }
     }
 
@@ -203,15 +284,40 @@ struct VisualAnalysisScreen: View {
         }
     }
 
+    private func captureScreenshot() {
+        isCapturingScreenshot = true
+        Task { @MainActor in
+            do {
+                selectedInput = try await store.captureInteractiveScreenshot()
+                if workflow == .general {
+                    workflow = .screenSummary
+                    prompt = workflow.defaultPrompt
+                }
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+            isCapturingScreenshot = false
+        }
+    }
+
     private func runAnalysis() {
         guard let selectedInput, let tokenCount = Int(maxTokens.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
         isRunning = true
         Task { @MainActor in
             do {
+                store.settings.visualDefaults = VisualAnalysisOptions(
+                    modelId: modelID,
+                    workflow: workflow,
+                    prompt: prompt,
+                    maxTokens: tokenCount,
+                    pythonRepoPath: store.settings.pythonMLXVLMRepoPath
+                )
+                store.saveSettings()
                 let result = try await store.runVisualAnalysis(
                     inputURL: selectedInput,
                     options: VisualAnalysisOptions(
                         modelId: modelID,
+                        workflow: workflow,
                         prompt: prompt,
                         maxTokens: tokenCount,
                         pythonRepoPath: store.settings.pythonMLXVLMRepoPath
@@ -224,6 +330,64 @@ struct VisualAnalysisScreen: View {
                 store.latestError = error.localizedDescription
             }
             isRunning = false
+        }
+    }
+
+    private func narrateResult() {
+        let text = resultText.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        isNarrating = true
+        Task { @MainActor in
+            do {
+                let path = try await store.runTextToAudio(
+                    text: text,
+                    options: TTSOptions(
+                        modelId: narrationModelID,
+                        outputFormat: "wav",
+                        voiceIdentifier: narrationVoiceIdentifier.isEmpty ? nil : narrationVoiceIdentifier,
+                        languageCode: narrationLanguageCode,
+                        backend: .automatic,
+                        pythonRepoPath: store.settings.pythonMLXRepoPath
+                    )
+                )
+                narrationPath = path
+                toggleNarrationPlayback(path: path)
+            } catch {
+                store.latestError = error.localizedDescription
+            }
+            isNarrating = false
+        }
+    }
+
+    private func toggleNarrationPlayback(path: String) {
+        if narrationPlayer?.isPlaying == true {
+            narrationPlayer?.stop()
+            narrationPlayer = nil
+            return
+        }
+
+        do {
+            let player = try AVAudioPlayer(contentsOf: URL(fileURLWithPath: path))
+            narrationPlayer = player
+            player.prepareToPlay()
+            player.play()
+        } catch {
+            store.latestError = error.localizedDescription
+            narrationPlayer = nil
+        }
+    }
+
+    private var sortedVisualPresets: [VisualPreset] {
+        switch workflow {
+        case .ocrPlainText, .ocrStructured:
+            return visualPresets.sorted { lhs, rhs in
+                if lhs.bestForOCR != rhs.bestForOCR {
+                    return lhs.bestForOCR && !rhs.bestForOCR
+                }
+                return lhs.title < rhs.title
+            }
+        case .general, .screenSummary:
+            return visualPresets
         }
     }
 }
@@ -962,15 +1126,23 @@ struct SettingsScreen: View {
                     .foregroundStyle(.secondary)
             }
             Section("Python mlx-vlm 0.4.3") {
+                Picker("Default workflow", selection: $store.settings.visualDefaults.workflow) {
+                    ForEach(VisualAnalysisWorkflow.allCases, id: \.self) { workflow in
+                        Text(workflow.displayName).tag(workflow)
+                    }
+                }
                 Picker("Default visual model", selection: $store.settings.visualDefaults.modelId) {
                     ForEach(visualPresets) { preset in
                         Text("\(preset.title) — \(preset.summary)").tag(preset.id)
                     }
                 }
+                Button("Use default workflow prompt") {
+                    store.settings.visualDefaults.prompt = store.settings.visualDefaults.workflow.defaultPrompt
+                }
                 TextField("Default visual prompt", text: $store.settings.visualDefaults.prompt, axis: .vertical)
                     .lineLimit(3, reservesSpace: true)
                 TextField("VLM repo path", text: $store.settings.pythonMLXVLMRepoPath)
-                Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment.")
+                Text("Use this for image, screenshot, and PDF-page analysis through the local mlx-vlm environment. OCR workflows pair best with Falcon OCR and DeepSeek OCR.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

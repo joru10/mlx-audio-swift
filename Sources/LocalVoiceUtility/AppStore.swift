@@ -19,6 +19,7 @@ final class AppStore: ObservableObject {
     @Published var selectedScreen: Screen = .home
     @Published var jobs: [JobRecord] = []
     @Published var latestVisualAnalysis: VisualAnalysisResult?
+    @Published var latestVisualNarrationPath: String?
     @Published var settings: AppSettings
     @Published var latestError: String?
 
@@ -138,6 +139,24 @@ final class AppStore: ObservableObject {
         let result = try await coordinator.runVisualAnalysis(inputURL: inputURL, options: resolved)
         latestVisualAnalysis = result
         return result
+    }
+
+    func captureInteractiveScreenshot() async throws -> URL {
+        try await coordinator.captureInteractiveScreenshot()
+    }
+
+    func runTextToAudio(text: String, options: TTSOptions) async throws -> String {
+        var resolved = options
+        resolved.voiceIdentifier = resolveVoiceIdentifier(for: resolved.modelId, explicitVoice: resolved.voiceIdentifier)
+        if resolved.languageCode.isEmpty {
+            resolved.languageCode = settings.preferredReaderLanguage
+        }
+        if resolved.pythonRepoPath?.isEmpty != false {
+            resolved.pythonRepoPath = settings.pythonMLXRepoPath
+        }
+        let outputURL = try await coordinator.runTextToAudioNow(text: text, options: resolved)
+        latestVisualNarrationPath = outputURL.path
+        return outputURL.path
     }
 
     private func upsertJob(_ job: JobRecord) {

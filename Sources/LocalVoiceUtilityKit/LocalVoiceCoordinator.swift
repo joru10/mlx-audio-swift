@@ -1,4 +1,5 @@
 import Foundation
+import MLXAudioCore
 
 public final class LocalVoiceCoordinator: @unchecked Sendable {
     public let paths: AppPaths
@@ -180,6 +181,29 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
             options: options,
             outputDirectory: paths.outputsDirectory
         )
+    }
+
+    public func captureInteractiveScreenshot() async throws -> URL {
+        try await PythonMLXVLMBridge.captureInteractiveScreenshot(outputDirectory: paths.outputsDirectory)
+    }
+
+    public func runTextToAudioNow(
+        text: String,
+        options: TTSOptions
+    ) async throws -> URL {
+        let normalized = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !normalized.isEmpty else {
+            throw NSError(
+                domain: "LocalVoiceCoordinator",
+                code: 1,
+                userInfo: [NSLocalizedDescriptionKey: "There is no text available to narrate."]
+            )
+        }
+
+        let outputURL = paths.outputsDirectory.appendingPathComponent("visual-narration-\(UUID().uuidString).wav")
+        let result = try await ttsService.synthesize(text: normalized, options: options)
+        try AudioUtils.writeWavFile(samples: result.samples, sampleRate: result.sampleRate, fileURL: outputURL)
+        return outputURL
     }
 
     private func executePDFJob(
