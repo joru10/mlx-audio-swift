@@ -325,7 +325,10 @@ public enum PythonMLXVLMBridge {
         process.standardError = logHandle
 
         try process.run()
+        let progressMonitor = DownloadProgressMonitor(modelId: modelId, progress: progress)
+        progressMonitor.start()
         process.waitUntilExit()
+        progressMonitor.stop()
         try? logHandle.close()
 
         let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
@@ -514,6 +517,7 @@ public enum PythonMLXVLMBridge {
         var env = ProcessInfo.processInfo.environment
         env["HF_HUB_DISABLE_XET"] = "1"
         env["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+        env["PYTHONUNBUFFERED"] = "1"
         return env
     }
 
@@ -529,6 +533,64 @@ public enum PythonMLXVLMBridge {
             process.arguments = ["-f", pattern]
             try? process.run()
             process.waitUntilExit()
+        }
+    }
+
+    private final class DownloadProgressMonitor: @unchecked Sendable {
+        private let modelId: String
+        private let progress: (@Sendable (String) -> Void)?
+        private let queue = DispatchQueue(label: "PythonMLXVLMBridge.DownloadProgress")
+        private var timer: DispatchSourceTimer?
+        private var lastBytes: Int64 = -1
+
+        init(modelId: String, progress: (@Sendable (String) -> Void)?) {
+            self.modelId = modelId
+            self.progress = progress
+        }
+
+        func start() {
+            let timer = DispatchSource.makeTimerSource(queue: queue)
+            timer.schedule(deadline: .now() + .seconds(2), repeating: .seconds(2))
+            timer.setEventHandler { [weak self] in
+                self?.emitProgressIfNeeded()
+            }
+            self.timer = timer
+            timer.resume()
+        }
+
+        func stop() {
+            timer?.cancel()
+            timer = nil
+        }
+
+        private func emitProgressIfNeeded() {
+            let bytes = currentIncompleteBytes()
+            guard bytes >= 0, bytes != lastBytes else { return }
+            lastBytes = bytes
+            progress?("Downloading model \(modelId): \(ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)) fetched")
+        }
+
+        private func currentIncompleteBytes() -> Int64 {
+            let cacheRoot = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".cache/huggingface/hub")
+                .appendingPathComponent("models--" + modelId.replacingOccurrences(of: "/", with: "--"))
+
+            guard let enumerator = FileManager.default.enumerator(
+                at: cacheRoot,
+                includingPropertiesForKeys: [.isRegularFileKey, .fileSizeKey],
+                options: [.skipsHiddenFiles]
+            ) else {
+                return -1
+            }
+
+            var total: Int64 = 0
+            for case let fileURL as URL in enumerator {
+                guard fileURL.pathExtension == "incomplete" else { continue }
+                let values = try? fileURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
+                guard values?.isRegularFile == true, let fileSize = values?.fileSize else { continue }
+                total += Int64(fileSize)
+            }
+            return total
         }
     }
 
