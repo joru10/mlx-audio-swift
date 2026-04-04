@@ -143,6 +143,7 @@ public struct SegmentationResult: Sendable {
     public let summaryText: String
     public let outputImagePath: String
     public let jsonPath: String
+    public let statusLogPath: String?
 }
 
 public enum PythonMLXVLMBridge {
@@ -259,7 +260,9 @@ public enum PythonMLXVLMBridge {
         threshold: Double,
         showBoxes: Bool,
         pythonRepoPath: String,
-        outputDirectory: URL
+        outputDirectory: URL,
+        statusLogPath: String? = nil,
+        progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> SegmentationResult {
         let repoPath = normalizedRepoPath(pythonRepoPath)
         let pythonExecutable = try resolvedPythonExecutable(repoPath: repoPath)
@@ -267,6 +270,8 @@ public enum PythonMLXVLMBridge {
         let stem = "sam3-\(task.rawValue)-\(UUID().uuidString)"
         let outputImageURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("png")
         let jsonURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("json")
+        let statusLogURL = statusLogPath.map { URL(fileURLWithPath: $0) }
+            ?? outputDirectory.appendingPathComponent(stem + "-status").appendingPathExtension("log")
 
         guard FileManager.default.fileExists(atPath: inputURL.path) else {
             throw NSError(
@@ -275,6 +280,16 @@ public enum PythonMLXVLMBridge {
                 userInfo: [NSLocalizedDescriptionKey: "The selected image is no longer available at \(inputURL.path). Re-select the file and try again."]
             )
         }
+
+        let reportStatus: @Sendable (String) -> Void = { message in
+            let line = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { return }
+            appendLine(line, to: statusLogURL)
+            progress?(line)
+        }
+        reportStatus("Preparing segmentation input...")
+        reportStatus("Using model \(modelId)")
+        reportStatus(task == .detect ? "Running detection..." : "Running segmentation...")
 
         var arguments = [
             scriptPath,
@@ -300,17 +315,24 @@ public enum PythonMLXVLMBridge {
         process.arguments = arguments
 
         let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = stderr
+        FileManager.default.createFile(atPath: statusLogURL.path, contents: nil)
+        let logHandle = try FileHandle(forWritingTo: statusLogURL)
+        _ = try? logHandle.seekToEnd()
+        process.standardError = logHandle
 
         try process.run()
         process.waitUntilExit()
+        try? logHandle.close()
 
         let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let errorOutput = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !output.isEmpty {
+            appendLine(output, to: statusLogURL)
+            progress?(output)
+        }
+        let errorOutput = (try? String(contentsOf: statusLogURL, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         guard process.terminationStatus == 0 else {
             throw NSError(
@@ -323,7 +345,8 @@ public enum PythonMLXVLMBridge {
         return SegmentationResult(
             summaryText: output,
             outputImagePath: outputImageURL.path,
-            jsonPath: jsonURL.path
+            jsonPath: jsonURL.path,
+            statusLogPath: statusLogURL.path
         )
     }
 

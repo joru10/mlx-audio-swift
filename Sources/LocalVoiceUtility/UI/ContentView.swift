@@ -869,6 +869,9 @@ struct SegmentationScreen: View {
     @State private var summaryText = ""
     @State private var outputImagePath: String?
     @State private var jsonPath: String?
+    @State private var statusLogPath: String?
+    @State private var runStatusText = ""
+    @State private var statusPollingTask: Task<Void, Never>?
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
@@ -941,10 +944,27 @@ struct SegmentationScreen: View {
                         NSWorkspace.shared.open(URL(fileURLWithPath: jsonPath))
                     }
                 }
+                if let statusLogPath {
+                    Button("Open Status Log") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: statusLogPath))
+                    }
+                }
             }
 
             Text("Summary")
                 .font(.headline)
+            if isRunning || !runStatusText.isEmpty {
+                GroupBox("Run Status") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(runStatusText.isEmpty ? "Preparing segmentation..." : runStatusText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if isRunning {
+                            ProgressView()
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
             ScrollView {
                 Text(summaryText.isEmpty ? "No result yet." : summaryText)
                     .frame(maxWidth: .infinity, alignment: .leading)
@@ -952,6 +972,9 @@ struct SegmentationScreen: View {
             .frame(maxHeight: .infinity)
         }
         .padding(24)
+        .onDisappear {
+            statusPollingTask?.cancel()
+        }
     }
 
     private func pickImage() {
@@ -968,6 +991,12 @@ struct SegmentationScreen: View {
               let resolvedThreshold = Double(threshold.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
         isRunning = true
         summaryText = ""
+        runStatusText = "Preparing segmentation..."
+        let logURL = URL(fileURLWithPath: store.settings.outputFolderPath, isDirectory: true)
+            .appendingPathComponent("segmentation-status-\(UUID().uuidString)")
+            .appendingPathExtension("log")
+        statusLogPath = logURL.path
+        startPollingStatusLog(at: logURL)
         Task { @MainActor in
             do {
                 let result = try await PythonMLXVLMBridge.runSegmentation(
@@ -979,15 +1008,46 @@ struct SegmentationScreen: View {
                     threshold: resolvedThreshold,
                     showBoxes: showBoxes,
                     pythonRepoPath: store.settings.pythonMLXVLMRepoPath,
-                    outputDirectory: URL(fileURLWithPath: store.settings.outputFolderPath, isDirectory: true)
+                    outputDirectory: URL(fileURLWithPath: store.settings.outputFolderPath, isDirectory: true),
+                    statusLogPath: logURL.path,
+                    progress: { message in
+                        Task { @MainActor in
+                            runStatusText = message
+                        }
+                    }
                 )
                 summaryText = result.summaryText
                 outputImagePath = result.outputImagePath
                 jsonPath = result.jsonPath
+                statusLogPath = result.statusLogPath
+                runStatusText = "Segmentation completed."
             } catch {
                 store.latestError = error.localizedDescription
+                runStatusText = "Segmentation failed."
             }
+            statusPollingTask?.cancel()
             isRunning = false
+        }
+    }
+
+    private func startPollingStatusLog(at url: URL) {
+        statusPollingTask?.cancel()
+        statusPollingTask = Task {
+            while !Task.isCancelled {
+                if let content = try? String(contentsOf: url, encoding: .utf8) {
+                    let lastLine = content
+                        .split(whereSeparator: \.isNewline)
+                        .map(String.init)
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .last(where: { !$0.isEmpty })
+                    if let lastLine, !lastLine.isEmpty {
+                        await MainActor.run {
+                            runStatusText = lastLine
+                        }
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(700))
+            }
         }
     }
 }
