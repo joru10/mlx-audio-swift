@@ -449,12 +449,29 @@ public enum PythonMLXVLMBridge {
         let logHandle = try FileHandle(forWritingTo: statusLogURL)
         try logHandle.seekToEnd()
         process.standardError = logHandle
+        let stdoutAccumulator = DataAccumulator()
+        stdout.fileHandleForReading.readabilityHandler = { handle in
+            let data = handle.availableData
+            guard !data.isEmpty else {
+                handle.readabilityHandler = nil
+                return
+            }
+            stdoutAccumulator.append(data)
+        }
 
         try process.run()
+        let progressMonitor = DownloadProgressMonitor(modelId: modelId, progress: progress)
+        progressMonitor.start()
         process.waitUntilExit()
+        progressMonitor.stop()
+        stdout.fileHandleForReading.readabilityHandler = nil
+        let trailingStdout = stdout.fileHandleForReading.readDataToEndOfFile()
+        if !trailingStdout.isEmpty {
+            stdoutAccumulator.append(trailingStdout)
+        }
         try? logHandle.close()
 
-        let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
+        let stdoutData = stdoutAccumulator.data
         let output = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         if !output.isEmpty {
             appendLine(output, to: statusLogURL)
@@ -591,6 +608,23 @@ public enum PythonMLXVLMBridge {
                 total += Int64(fileSize)
             }
             return total
+        }
+    }
+
+    private final class DataAccumulator: @unchecked Sendable {
+        private let lock = NSLock()
+        private var storage = Data()
+
+        var data: Data {
+            lock.lock()
+            defer { lock.unlock() }
+            return storage
+        }
+
+        func append(_ data: Data) {
+            lock.lock()
+            storage.append(data)
+            lock.unlock()
         }
     }
 
