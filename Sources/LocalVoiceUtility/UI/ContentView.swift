@@ -19,13 +19,18 @@ struct ContentView: View {
                 .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
         }
         .navigationSplitViewStyle(.balanced)
-        .alert("Error", isPresented: Binding(
+        .sheet(isPresented: Binding(
             get: { store.latestError != nil },
-            set: { _ in store.latestError = nil }
+            set: { presented in
+                if !presented {
+                    store.latestError = nil
+                }
+            }
         )) {
-            Button("OK", role: .cancel) {}
-        } message: {
-            Text(store.latestError ?? "Unknown error")
+            ErrorSheet(
+                message: store.latestError ?? "Unknown error",
+                onDismiss: { store.latestError = nil }
+            )
         }
     }
 
@@ -55,6 +60,36 @@ struct ContentView: View {
         case .settings:
             SettingsScreen()
         }
+    }
+}
+
+private struct ErrorSheet: View {
+    let message: String
+    let onDismiss: () -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 16) {
+            Text("Error")
+                .font(.title2.bold())
+            ScrollView {
+                Text(message)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .frame(minHeight: 260)
+            AdaptiveButtonRow {
+                Button("Copy Error") {
+                    NSPasteboard.general.clearContents()
+                    NSPasteboard.general.setString(message, forType: .string)
+                }
+                Button("Close") {
+                    onDismiss()
+                }
+                .buttonStyle(.borderedProminent)
+            }
+        }
+        .padding(24)
+        .frame(minWidth: 720, minHeight: 420)
     }
 }
 
@@ -212,8 +247,8 @@ private let visualPresets: [VisualPreset] = [
 ]
 
 private let segmentationPresets: [SegmentationPreset] = [
-    .init(id: "facebook/sam3", title: "SAM 3", summary: "Detection and segmentation"),
     .init(id: "mlx-community/sam3.1-bf16", title: "SAM 3.1", summary: "Latest SAM 3.1 detection and segmentation"),
+    .init(id: "facebook/sam3", title: "SAM 3", summary: "Detection and segmentation (gated)"),
 ]
 
 struct VisualAnalysisScreen: View {
@@ -856,7 +891,7 @@ struct SegmentationScreen: View {
     @EnvironmentObject private var store: AppStore
     @State private var selectedInput: URL?
     @State private var task: SamTaskMode = .segment
-    @State private var modelID = segmentationPresets.first?.id ?? "facebook/sam3.1"
+    @State private var modelID = segmentationPresets.first?.id ?? "mlx-community/sam3.1-bf16"
     @State private var prompt = "a person"
     @State private var boxes = ""
     @State private var threshold = "0.3"
