@@ -236,13 +236,18 @@ public enum PythonMLXVLMBridge {
     ) async throws -> SegmentationResult {
         let repoPath = normalizedRepoPath(pythonRepoPath)
         let pythonExecutable = try resolvedPythonExecutable(repoPath: repoPath)
-        let scriptPath = URL(fileURLWithPath: repoPath)
-            .deletingLastPathComponent()
-            .appendingPathComponent("scripts/sam3_runner.py")
-            .path
+        let scriptPath = try resolvedSegmentationScriptPath(repoPath: repoPath)
         let stem = "sam3-\(task.rawValue)-\(UUID().uuidString)"
         let outputImageURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("png")
         let jsonURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("json")
+
+        guard FileManager.default.fileExists(atPath: inputURL.path) else {
+            throw NSError(
+                domain: "PythonMLXVLMBridge",
+                code: 10,
+                userInfo: [NSLocalizedDescriptionKey: "The selected image is no longer available at \(inputURL.path). Re-select the file and try again."]
+            )
+        }
 
         var arguments = [
             scriptPath,
@@ -453,6 +458,29 @@ public enum PythonMLXVLMBridge {
             domain: "PythonMLXVLMBridge",
             code: 1,
             userInfo: [NSLocalizedDescriptionKey: "Could not find mlx-vlm runtime. Install it in \(repoPath)/.venv or provide UV_BIN."]
+        )
+    }
+
+    private static func resolvedSegmentationScriptPath(repoPath: String) throws -> String {
+        let candidates = [
+            URL(fileURLWithPath: repoPath)
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("scripts/sam3_runner.py")
+                .path,
+            URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
+                .appendingPathComponent("scripts/sam3_runner.py")
+                .path,
+        ]
+
+        if let match = candidates.first(where: { FileManager.default.fileExists(atPath: $0) }) {
+            return match
+        }
+
+        throw NSError(
+            domain: "PythonMLXVLMBridge",
+            code: 11,
+            userInfo: [NSLocalizedDescriptionKey: "Could not find the local SAM runner script. Expected one of: \(candidates.joined(separator: ", "))"]
         )
     }
 
