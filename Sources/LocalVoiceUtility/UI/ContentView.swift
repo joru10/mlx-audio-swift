@@ -706,11 +706,7 @@ struct VisualAnalysisScreen: View {
         statusPollingTask = Task {
             while !Task.isCancelled {
                 if let content = try? String(contentsOf: url, encoding: .utf8) {
-                    let lastLine = content
-                        .split(whereSeparator: \.isNewline)
-                        .map(String.init)
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .last(where: { !$0.isEmpty })
+                    let lastLine = latestStatusLine(in: content)
                     if let lastLine, !lastLine.isEmpty {
                         await MainActor.run {
                             analysisStatusText = lastLine
@@ -1035,11 +1031,7 @@ struct SegmentationScreen: View {
         statusPollingTask = Task {
             while !Task.isCancelled {
                 if let content = try? String(contentsOf: url, encoding: .utf8) {
-                    let lastLine = content
-                        .split(whereSeparator: \.isNewline)
-                        .map(String.init)
-                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
-                        .last(where: { !$0.isEmpty })
+                    let lastLine = latestStatusLine(in: content)
                     if let lastLine, !lastLine.isEmpty {
                         await MainActor.run {
                             runStatusText = lastLine
@@ -2229,6 +2221,14 @@ private func availableSystemVoices() -> [VoiceOption] {
         return VoiceOption(id: id.rawValue, label: label)
     }
     .sorted { $0.label < $1.label }
+}
+
+private func latestStatusLine(in content: String) -> String? {
+    content
+        .split(whereSeparator: { $0.isNewline || $0 == "\r" })
+        .map(String.init)
+        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+        .last(where: { !$0.isEmpty })
 }
 
 private func runProcess(_ launchPath: String, _ args: [String]) -> Int32 {
