@@ -182,12 +182,16 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
 
     public func runVisualAnalysis(
         inputURL: URL,
-        options: VisualAnalysisOptions
+        options: VisualAnalysisOptions,
+        statusLogPath: String? = nil,
+        progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> VisualAnalysisResult {
         try await PythonMLXVLMBridge.analyze(
             inputURL: inputURL,
             options: options,
-            outputDirectory: paths.outputsDirectory
+            outputDirectory: paths.outputsDirectory,
+            statusLogPath: statusLogPath,
+            progress: progress
         )
     }
 

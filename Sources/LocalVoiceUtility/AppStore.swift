@@ -250,12 +250,22 @@ final class AppStore: ObservableObject {
         }
     }
 
-    func runVisualAnalysis(inputURL: URL, options: VisualAnalysisOptions) async throws -> VisualAnalysisResult {
+    func runVisualAnalysis(
+        inputURL: URL,
+        options: VisualAnalysisOptions,
+        statusLogPath: String? = nil,
+        progress: (@Sendable (String) -> Void)? = nil
+    ) async throws -> VisualAnalysisResult {
         var resolved = options
         if resolved.pythonRepoPath.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
             resolved.pythonRepoPath = settings.pythonMLXVLMRepoPath
         }
-        let result = try await coordinator.runVisualAnalysis(inputURL: inputURL, options: resolved)
+        let result = try await coordinator.runVisualAnalysis(
+            inputURL: inputURL,
+            options: resolved,
+            statusLogPath: statusLogPath,
+            progress: progress
+        )
         latestVisualAnalysis = result
         return result
     }

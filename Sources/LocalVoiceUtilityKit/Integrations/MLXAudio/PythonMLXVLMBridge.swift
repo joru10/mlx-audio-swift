@@ -136,6 +136,7 @@ public struct VisualAnalysisResult: Sendable {
     public let outputPath: String
     public let renderedInputPath: String
     public let jsonPath: String?
+    public let statusLogPath: String?
 }
 
 public struct SegmentationResult: Sendable {
@@ -157,7 +158,9 @@ public enum PythonMLXVLMBridge {
     public static func analyze(
         inputURL: URL,
         options: VisualAnalysisOptions,
-        outputDirectory: URL
+        outputDirectory: URL,
+        statusLogPath: String? = nil,
+        progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> VisualAnalysisResult {
         let repoPath = normalizedRepoPath(options.pythonRepoPath)
         let invocation = try resolvedInvocation(repoPath: repoPath)
@@ -165,12 +168,33 @@ public enum PythonMLXVLMBridge {
         let stem = "visual-analysis-\(UUID().uuidString)"
         let outputURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("txt")
         let jsonURL = outputDirectory.appendingPathComponent(stem).appendingPathExtension("json")
+        let statusLogURL = statusLogPath.map { URL(fileURLWithPath: $0) }
+            ?? outputDirectory.appendingPathComponent(stem + "-status").appendingPathExtension("log")
+
+        let reportStatus: @Sendable (String) -> Void = { message in
+            let line = message.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !line.isEmpty else { return }
+            appendLine(line, to: statusLogURL)
+            progress?(line)
+        }
+
+        reportStatus("Preparing visual analysis input...")
+        reportStatus("Using model \(options.modelId)")
+        if let kvBits = options.kvBits {
+            reportStatus("KV cache quantization enabled: \(kvBits) bits, scheme \(options.kvQuantScheme.rawValue)")
+        }
+        if renderedInputURLs.count > 1 {
+            reportStatus("Rendered \(renderedInputURLs.count) PDF pages for analysis.")
+        }
 
         var pageOutputs: [String] = []
         for (index, renderedInputURL) in renderedInputURLs.enumerated() {
             let prompt = renderedInputURLs.count > 1
                 ? "\(options.prompt)\n\nThis is page \(index + 1) of \(renderedInputURLs.count)."
                 : options.prompt
+            reportStatus(renderedInputURLs.count > 1
+                         ? "Analyzing page \(index + 1) of \(renderedInputURLs.count)..."
+                         : "Running model inference...")
             let output = try runGeneration(
                 invocation: invocation,
                 repoPath: repoPath,
@@ -180,7 +204,9 @@ public enum PythonMLXVLMBridge {
                 imagePath: renderedInputURL.path,
                 audioInputPath: options.audioInputPath,
                 kvBits: options.kvBits,
-                kvQuantScheme: options.kvQuantScheme
+                kvQuantScheme: options.kvQuantScheme,
+                progress: reportStatus,
+                statusLogURL: statusLogURL
             )
             let labeledOutput = renderedInputURLs.count > 1 ? "Page \(index + 1)\n\(output)" : output
             pageOutputs.append(labeledOutput)
@@ -199,7 +225,8 @@ public enum PythonMLXVLMBridge {
             text: combinedOutput,
             outputPath: outputURL.path,
             renderedInputPath: renderedInputURLs.first?.path ?? inputURL.path,
-            jsonPath: jsonPath
+            jsonPath: jsonPath,
+            statusLogPath: statusLogURL.path
         )
     }
 
@@ -364,7 +391,9 @@ public enum PythonMLXVLMBridge {
         imagePath: String,
         audioInputPath: String?,
         kvBits: Double?,
-        kvQuantScheme: VLMKVQuantizationScheme
+        kvQuantScheme: VLMKVQuantizationScheme,
+        progress: (@Sendable (String) -> Void)? = nil,
+        statusLogURL: URL
     ) throws -> String {
         var arguments = invocation.arguments + [
             "--model", modelId,
@@ -385,17 +414,24 @@ public enum PythonMLXVLMBridge {
         process.arguments = arguments
 
         let stdout = Pipe()
-        let stderr = Pipe()
         process.standardOutput = stdout
-        process.standardError = stderr
+        FileManager.default.createFile(atPath: statusLogURL.path, contents: nil)
+        let logHandle = try FileHandle(forWritingTo: statusLogURL)
+        try logHandle.seekToEnd()
+        process.standardError = logHandle
 
         try process.run()
         process.waitUntilExit()
+        try? logHandle.close()
 
         let stdoutData = stdout.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderr.fileHandleForReading.readDataToEndOfFile()
         let output = String(data: stdoutData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-        let errorOutput = String(data: stderrData, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        if !output.isEmpty {
+            appendLine(output, to: statusLogURL)
+            progress?(normalizeProgressLine(output, modelId: modelId))
+        }
+        let errorOutput = (try? String(contentsOf: statusLogURL, encoding: .utf8))?
+            .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
 
         guard process.terminationStatus == 0 else {
             throw NSError(
@@ -412,6 +448,36 @@ public enum PythonMLXVLMBridge {
             )
         }
         return output
+    }
+
+    private static func appendLine(_ line: String, to url: URL) {
+        let text = line.hasSuffix("\n") ? line : line + "\n"
+        let data = Data(text.utf8)
+        if FileManager.default.fileExists(atPath: url.path) {
+            if let handle = try? FileHandle(forWritingTo: url) {
+                _ = try? handle.seekToEnd()
+                try? handle.write(contentsOf: data)
+                try? handle.close()
+            }
+        } else {
+            try? data.write(to: url, options: .atomic)
+        }
+    }
+
+    private static func normalizeProgressLine(_ line: String, modelId: String) -> String {
+        let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmed.isEmpty else { return "" }
+        let lower = trimmed.lowercased()
+        if lower.contains("fetching ") || lower.contains("downloading") {
+            return "Downloading model assets: \(trimmed)"
+        }
+        if lower.contains("loading checkpoint") || lower.contains("loading model") {
+            return "Loading model \(modelId): \(trimmed)"
+        }
+        if lower.contains("warming up") {
+            return "Warming up model \(modelId): \(trimmed)"
+        }
+        return trimmed
     }
 
     private static func normalizedRepoPath(_ path: String) -> String {

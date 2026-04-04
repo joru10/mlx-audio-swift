@@ -233,6 +233,8 @@ struct VisualAnalysisScreen: View {
     @State private var outputPath: String?
     @State private var renderedInputPath: String?
     @State private var jsonPath: String?
+    @State private var statusLogPath: String?
+    @State private var analysisStatusText = ""
     @State private var narrationPath: String?
     @State private var narrationModelID = TTSOptions().modelId
     @State private var narrationLanguageCode = TTSOptions().languageCode
@@ -245,6 +247,7 @@ struct VisualAnalysisScreen: View {
     @State private var additionalContext = ""
     @State private var selectedActionProfileID: UUID?
     @State private var actionProfileDraft = VisualActionProfileDraft()
+    @State private var statusPollingTask: Task<Void, Never>?
 
     private var selectedPreset: VisualPreset? {
         visualPresets.first(where: { $0.id == modelID })
@@ -392,6 +395,11 @@ struct VisualAnalysisScreen: View {
                         NSWorkspace.shared.open(URL(fileURLWithPath: jsonPath))
                     }
                 }
+                if let statusLogPath {
+                    Button("Open Status Log") {
+                        NSWorkspace.shared.open(URL(fileURLWithPath: statusLogPath))
+                    }
+                }
                 if let outputPath {
                     Button("Reveal Result") {
                         NSWorkspace.shared.activateFileViewerSelecting([URL(fileURLWithPath: outputPath)])
@@ -406,6 +414,18 @@ struct VisualAnalysisScreen: View {
 
             Text("Result")
                 .font(.headline)
+            if isRunning || !analysisStatusText.isEmpty {
+                GroupBox("Run Status") {
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(analysisStatusText.isEmpty ? "Preparing analysis..." : analysisStatusText)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if isRunning {
+                            ProgressView()
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
             ScrollView {
                 Text(resultText.isEmpty ? "No result yet." : resultText)
                     .font(.system(.body, design: .default))
@@ -518,6 +538,7 @@ struct VisualAnalysisScreen: View {
                 outputPath = latest.outputPath
                 renderedInputPath = latest.renderedInputPath
                 jsonPath = latest.jsonPath
+                statusLogPath = latest.statusLogPath
             }
             narrationPath = store.latestVisualNarrationPath
         }
@@ -549,6 +570,9 @@ struct VisualAnalysisScreen: View {
             actionProfileDraft.payload = route.payload
             webhookURL = route.payload
             selectedWebhookTemplateID = nil
+        }
+        .onDisappear {
+            statusPollingTask?.cancel()
         }
     }
 
@@ -621,6 +645,12 @@ struct VisualAnalysisScreen: View {
     private func runAnalysis() {
         guard let selectedInput, let tokenCount = Int(maxTokens.trimmingCharacters(in: .whitespacesAndNewlines)) else { return }
         isRunning = true
+        analysisStatusText = "Preparing visual analysis..."
+        let logURL = URL(fileURLWithPath: store.settings.outputFolderPath, isDirectory: true)
+            .appendingPathComponent("visual-analysis-status-\(UUID().uuidString)")
+            .appendingPathExtension("log")
+        statusLogPath = logURL.path
+        startPollingStatusLog(at: logURL)
         let resolvedKVBits = Double(kvBits.trimmingCharacters(in: .whitespacesAndNewlines))
         Task { @MainActor in
             do {
@@ -648,16 +678,47 @@ struct VisualAnalysisScreen: View {
                         kvQuantScheme: kvQuantScheme,
                         processAllPDFPages: store.settings.visualDefaults.processAllPDFPages,
                         pythonRepoPath: store.settings.pythonMLXVLMRepoPath
-                    )
+                    ),
+                    statusLogPath: logURL.path,
+                    progress: { message in
+                        Task { @MainActor in
+                            analysisStatusText = message
+                        }
+                    }
                 )
                 resultText = result.text
                 outputPath = result.outputPath
                 renderedInputPath = result.renderedInputPath
                 jsonPath = result.jsonPath
+                statusLogPath = result.statusLogPath
+                analysisStatusText = "Analysis completed."
             } catch {
                 store.latestError = error.localizedDescription
+                analysisStatusText = "Analysis failed."
             }
+            statusPollingTask?.cancel()
             isRunning = false
+        }
+    }
+
+    private func startPollingStatusLog(at url: URL) {
+        statusPollingTask?.cancel()
+        statusPollingTask = Task {
+            while !Task.isCancelled {
+                if let content = try? String(contentsOf: url, encoding: .utf8) {
+                    let lastLine = content
+                        .split(whereSeparator: \.isNewline)
+                        .map(String.init)
+                        .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+                        .last(where: { !$0.isEmpty })
+                    if let lastLine, !lastLine.isEmpty {
+                        await MainActor.run {
+                            analysisStatusText = lastLine
+                        }
+                    }
+                }
+                try? await Task.sleep(for: .milliseconds(700))
+            }
         }
     }
 
