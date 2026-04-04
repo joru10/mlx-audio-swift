@@ -313,6 +313,7 @@ public enum PythonMLXVLMBridge {
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
         process.executableURL = URL(fileURLWithPath: pythonExecutable)
         process.arguments = arguments
+        process.environment = huggingFaceEnvironment()
 
         let stdout = Pipe()
         process.standardOutput = stdout
@@ -435,6 +436,7 @@ public enum PythonMLXVLMBridge {
         process.currentDirectoryURL = URL(fileURLWithPath: repoPath)
         process.executableURL = URL(fileURLWithPath: invocation.executable)
         process.arguments = arguments
+        process.environment = huggingFaceEnvironment()
 
         let stdout = Pipe()
         process.standardOutput = stdout
@@ -491,6 +493,9 @@ public enum PythonMLXVLMBridge {
         let trimmed = line.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { return "" }
         let lower = trimmed.lowercased()
+        if lower.contains("unauthenticated requests") || lower.contains("set a hf_token") {
+            return "Hugging Face is downloading without authentication. Set HF_TOKEN for higher rate limits and faster downloads."
+        }
         if lower.contains("fetching ") || lower.contains("downloading") {
             return "Downloading model assets: \(trimmed)"
         }
@@ -501,6 +506,13 @@ public enum PythonMLXVLMBridge {
             return "Warming up model \(modelId): \(trimmed)"
         }
         return trimmed
+    }
+
+    private static func huggingFaceEnvironment() -> [String: String] {
+        var env = ProcessInfo.processInfo.environment
+        env["HF_HUB_DISABLE_XET"] = "1"
+        env["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
+        return env
     }
 
     private static func normalizedRepoPath(_ path: String) -> String {
