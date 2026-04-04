@@ -163,6 +163,7 @@ public enum PythonMLXVLMBridge {
         statusLogPath: String? = nil,
         progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> VisualAnalysisResult {
+        terminateStaleVLMProcesses()
         let repoPath = normalizedRepoPath(options.pythonRepoPath)
         let invocation = try resolvedInvocation(repoPath: repoPath)
         let renderedInputURLs = try renderedInputURLs(for: inputURL, options: options, outputDirectory: outputDirectory)
@@ -264,6 +265,7 @@ public enum PythonMLXVLMBridge {
         statusLogPath: String? = nil,
         progress: (@Sendable (String) -> Void)? = nil
     ) async throws -> SegmentationResult {
+        terminateStaleVLMProcesses()
         let repoPath = normalizedRepoPath(pythonRepoPath)
         let pythonExecutable = try resolvedPythonExecutable(repoPath: repoPath)
         let scriptPath = try resolvedSegmentationScriptPath(repoPath: repoPath)
@@ -513,6 +515,21 @@ public enum PythonMLXVLMBridge {
         env["HF_HUB_DISABLE_XET"] = "1"
         env["HF_HUB_ENABLE_HF_TRANSFER"] = "0"
         return env
+    }
+
+    private static func terminateStaleVLMProcesses() {
+        let patterns = [
+            "/Users/joru2/Applications/MLXAudio/Vendor/mlx-vlm/.venv/bin/mlx_vlm.generate",
+            "/Users/joru2/Applications/MLXAudio/scripts/sam3_runner.py",
+        ]
+
+        for pattern in patterns {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/pkill")
+            process.arguments = ["-f", pattern]
+            try? process.run()
+            process.waitUntilExit()
+        }
     }
 
     private static func normalizedRepoPath(_ path: String) -> String {
