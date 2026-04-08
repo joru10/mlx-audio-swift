@@ -321,9 +321,10 @@ final class AppStore: ObservableObject {
         if resolved.pythonRepoPath?.isEmpty != false {
             resolved.pythonRepoPath = settings.pythonMLXLMRepoPath
         }
-        if resolved.backend == .automatic,
-           let preset = TextModelCatalog.preset(for: resolved.modelId) {
-            resolved.backend = preset.backend
+        if let preset = TextModelCatalog.preset(for: resolved.modelId) {
+            if resolved.backend == .automatic || preset.backend == .pythonMLX {
+                resolved.backend = preset.backend
+            }
         }
         return try await coordinator.respondWithLocalAssistant(
             prompt: prompt,

@@ -1208,6 +1208,9 @@ struct LocalAssistantScreen: View {
             maxTokens = String(store.settings.lmDefaults.maxTokens)
             temperature = String(store.settings.lmDefaults.temperature)
             backend = store.settings.lmDefaults.backend
+            if let preset = TextModelCatalog.preset(for: modelID) {
+                backend = preset.backend
+            }
             applyPendingSeedIfNeeded()
         }
         .onChange(of: modelID) { _, newValue in
