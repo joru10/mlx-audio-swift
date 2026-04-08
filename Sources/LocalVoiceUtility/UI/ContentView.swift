@@ -1104,6 +1104,7 @@ struct LocalAssistantScreen: View {
     @State private var systemPrompt = LMOptions().systemPrompt
     @State private var maxTokens = String(LMOptions().maxTokens)
     @State private var temperature = String(LMOptions().temperature)
+    @State private var backend = LMOptions().backend
     @State private var draftPrompt = ""
     @State private var pinnedContextTitle = ""
     @State private var pinnedContext = ""
@@ -1119,10 +1120,15 @@ struct LocalAssistantScreen: View {
             ScreenSection(title: "Model") {
                 Picker("Preset", selection: $modelID) {
                     ForEach(TextModelCatalog.presets) { preset in
-                        Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                        Text("\(preset.title) (\(preset.backend.rawValue)) — \(preset.summary)").tag(preset.id)
                     }
                 }
                 TextField("Model ID", text: $modelID)
+                Picker("Backend", selection: $backend) {
+                    ForEach(InferenceBackend.allCases, id: \.self) { option in
+                        Text(option.rawValue).tag(option)
+                    }
+                }
                 TextField("Max tokens", text: $maxTokens)
                 TextField("Temperature", text: $temperature)
                 TextField("System prompt", text: $systemPrompt, axis: .vertical)
@@ -1201,7 +1207,13 @@ struct LocalAssistantScreen: View {
             systemPrompt = store.settings.lmDefaults.systemPrompt
             maxTokens = String(store.settings.lmDefaults.maxTokens)
             temperature = String(store.settings.lmDefaults.temperature)
+            backend = store.settings.lmDefaults.backend
             applyPendingSeedIfNeeded()
+        }
+        .onChange(of: modelID) { _, newValue in
+            if let preset = TextModelCatalog.preset(for: newValue) {
+                backend = preset.backend
+            }
         }
     }
 
@@ -1233,7 +1245,8 @@ struct LocalAssistantScreen: View {
             modelId: modelID,
             systemPrompt: systemPrompt,
             maxTokens: resolvedMaxTokens,
-            temperature: resolvedTemperature
+            temperature: resolvedTemperature,
+            backend: backend
         )
         store.settings.lmDefaults = options
         store.saveSettings()
@@ -2173,7 +2186,7 @@ struct ModelsScreen: View {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(TextModelCatalog.presets) { preset in
                         VStack(alignment: .leading, spacing: 2) {
-                            Text("\(preset.title) — \(preset.summary)")
+                            Text("\(preset.title) (\(preset.backend.rawValue)) — \(preset.summary)")
                             Text(preset.id)
                                 .font(.caption2)
                                 .foregroundStyle(.secondary)
@@ -2234,7 +2247,12 @@ struct SettingsScreen: View {
             ScreenSection(title: "Local Assistant") {
                 Picker("Default text model", selection: $store.settings.lmDefaults.modelId) {
                     ForEach(TextModelCatalog.presets) { preset in
-                        Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                        Text("\(preset.title) (\(preset.backend.rawValue)) — \(preset.summary)").tag(preset.id)
+                    }
+                }
+                Picker("Assistant backend", selection: $store.settings.lmDefaults.backend) {
+                    ForEach(InferenceBackend.allCases, id: \.self) { option in
+                        Text(option.rawValue).tag(option)
                     }
                 }
                 TextField("System prompt", text: $store.settings.lmDefaults.systemPrompt, axis: .vertical)
@@ -2323,6 +2341,12 @@ struct SettingsScreen: View {
             ScreenSection(title: "Python mlx-audio 0.4.2") {
                 TextField("Repo path", text: $store.settings.pythonMLXRepoPath)
                 Text("Point this to your cloned Python mlx-audio repo for Whisper, Cohere, Canary, Moonshine, MMS, Granite, SenseVoice, FireRedASR2, Fish Audio, Irodori, KugelAudio, Voxtral TTS, HumeAI Tada, DeepFilterNet, and OGG/Opus/Vorbis workflows.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            ScreenSection(title: "Python mlx-lm 0.31.2") {
+                TextField("Repo path", text: $store.settings.pythonMLXLMRepoPath)
+                Text("Use this for Gemma 4 and other text models that land first in Python mlx-lm. The Local Assistant will use it when the selected text model backend is pythonMLX.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }

@@ -142,6 +142,7 @@ final class AppStore: ObservableObject {
                 resolved.ttsDefaults.pythonRepoPath = resolved.pythonMLXRepoPath
                 resolved.sttDefaults.languageCode = resolved.preferredTranscriptionLanguage
                 resolved.sttDefaults.pythonRepoPath = resolved.pythonMLXRepoPath
+                resolved.lmDefaults.pythonRepoPath = resolved.pythonMLXLMRepoPath
                 resolved.visualDefaults.pythonRepoPath = resolved.pythonMLXVLMRepoPath
                 try coordinator.saveSettings(resolved)
                 try await coordinator.saveActionProfiles(profilesSnapshot)
@@ -316,10 +317,18 @@ final class AppStore: ObservableObject {
         progress: (@Sendable (String) -> Void)? = nil,
         onChunk: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
-        try await coordinator.respondWithLocalAssistant(
+        var resolved = options
+        if resolved.pythonRepoPath?.isEmpty != false {
+            resolved.pythonRepoPath = settings.pythonMLXLMRepoPath
+        }
+        if resolved.backend == .automatic,
+           let preset = TextModelCatalog.preset(for: resolved.modelId) {
+            resolved.backend = preset.backend
+        }
+        return try await coordinator.respondWithLocalAssistant(
             prompt: prompt,
             context: context,
-            options: options,
+            options: resolved,
             progress: progress,
             onChunk: onChunk
         )

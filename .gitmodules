@@ -4,3 +4,6 @@
 [submodule "Vendor/mlx-vlm"]
 	path = Vendor/mlx-vlm
 	url = https://github.com/Blaizzy/mlx-vlm.git
+[submodule "Vendor/mlx-lm"]
+	path = Vendor/mlx-lm
+	url = https://github.com/ml-explore/mlx-lm.git

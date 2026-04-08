@@ -11,6 +11,7 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
     private let ttsService = TTSService()
     private let sttService = STTService()
     private let lmService = LMService()
+    private let pythonLMBridge = PythonMLXLMBridge()
 
     public init(paths: AppPaths = try! AppPaths()) {
         self.paths = paths
@@ -234,13 +235,29 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
         progress: (@Sendable (String) -> Void)? = nil,
         onChunk: (@Sendable (String) -> Void)? = nil
     ) async throws -> String {
-        try await lmService.respond(
-            prompt: prompt,
-            context: context,
-            options: options,
-            progress: progress,
-            onChunk: onChunk
-        )
+        switch options.backend {
+        case .pythonMLX:
+            let finalPrompt: String
+            if let context, !context.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                finalPrompt = "Context:\n\(context)\n\nUser request:\n\(prompt)"
+            } else {
+                finalPrompt = prompt
+            }
+            return try await pythonLMBridge.respond(
+                prompt: finalPrompt,
+                options: options,
+                progress: progress,
+                onChunk: onChunk
+            )
+        case .automatic, .swiftMLX, .systemFallback:
+            return try await lmService.respond(
+                prompt: prompt,
+                context: context,
+                options: options,
+                progress: progress,
+                onChunk: onChunk
+            )
+        }
     }
 
     public func resetLocalAssistantConversation() async {
