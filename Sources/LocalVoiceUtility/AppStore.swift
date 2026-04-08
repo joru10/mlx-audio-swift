@@ -7,6 +7,7 @@ import AppKit
 final class AppStore: ObservableObject {
     enum Screen: String, CaseIterable, Hashable {
         case home = "Home"
+        case assistant = "Local Assistant"
         case visual = "Visual Analysis"
         case segment = "Detection & Segmentation"
         case scannedPDF = "Scanned PDF -> Audio"
@@ -24,6 +25,7 @@ final class AppStore: ObservableObject {
     @Published var actionProfiles: [ActionProfile] = []
     @Published var latestVisualAnalysis: VisualAnalysisResult?
     @Published var latestVisualNarrationPath: String?
+    @Published var pendingAssistantSeed: LocalAssistantSeed?
     @Published var settings: AppSettings
     @Published var latestError: String?
     @Published var isTelegramRelayRunning = false
@@ -268,6 +270,63 @@ final class AppStore: ObservableObject {
         )
         latestVisualAnalysis = result
         return result
+    }
+
+    func openAssistant(title: String, context: String, suggestedPrompt: String) {
+        pendingAssistantSeed = LocalAssistantSeed(title: title, context: context, suggestedPrompt: suggestedPrompt)
+        selectedScreen = .assistant
+    }
+
+    func consumeAssistantSeed() -> LocalAssistantSeed? {
+        let seed = pendingAssistantSeed
+        pendingAssistantSeed = nil
+        return seed
+    }
+
+    func askAboutFile(path: String, title: String, suggestedPrompt: String = "Summarize the important points and answer my question using only this context.") {
+        do {
+            let url = URL(fileURLWithPath: path)
+            let text = try String(contentsOf: url, encoding: .utf8)
+            openAssistant(
+                title: title,
+                context: String(text.prefix(24_000)),
+                suggestedPrompt: suggestedPrompt
+            )
+        } catch {
+            latestError = error.localizedDescription
+        }
+    }
+
+    func askAboutLatestVisualResult() {
+        guard let latestVisualAnalysis else {
+            latestError = "There is no visual analysis result to send to the assistant."
+            return
+        }
+        openAssistant(
+            title: "Visual analysis result",
+            context: String(latestVisualAnalysis.text.prefix(24_000)),
+            suggestedPrompt: "Explain the key findings, highlight anything important, and answer follow-up questions using this analysis."
+        )
+    }
+
+    func sendAssistantPrompt(
+        prompt: String,
+        context: String?,
+        options: LMOptions,
+        progress: (@Sendable (String) -> Void)? = nil,
+        onChunk: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        try await coordinator.respondWithLocalAssistant(
+            prompt: prompt,
+            context: context,
+            options: options,
+            progress: progress,
+            onChunk: onChunk
+        )
+    }
+
+    func resetAssistantConversation() async {
+        await coordinator.resetLocalAssistantConversation()
     }
 
     func captureInteractiveScreenshot() async throws -> URL {

@@ -227,6 +227,8 @@ let package = Package(
                 "MLXAudioTTS",
                 "MLXAudioSTT",
                 "MLXAudioVAD",
+                .product(name: "MLXLMCommon", package: "mlx-swift-lm"),
+                .product(name: "MLXLLM", package: "mlx-swift-lm"),
             ],
             path: "Sources/LocalVoiceUtilityKit"
         ),

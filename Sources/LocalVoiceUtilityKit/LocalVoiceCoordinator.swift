@@ -10,6 +10,7 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
 
     private let ttsService = TTSService()
     private let sttService = STTService()
+    private let lmService = LMService()
 
     public init(paths: AppPaths = try! AppPaths()) {
         self.paths = paths
@@ -224,6 +225,26 @@ public final class LocalVoiceCoordinator: @unchecked Sendable {
         let result = try await ttsService.synthesize(text: normalized, options: options)
         try AudioUtils.writeWavFile(samples: result.samples, sampleRate: result.sampleRate, fileURL: outputURL)
         return outputURL
+    }
+
+    public func respondWithLocalAssistant(
+        prompt: String,
+        context: String?,
+        options: LMOptions,
+        progress: (@Sendable (String) -> Void)? = nil,
+        onChunk: (@Sendable (String) -> Void)? = nil
+    ) async throws -> String {
+        try await lmService.respond(
+            prompt: prompt,
+            context: context,
+            options: options,
+            progress: progress,
+            onChunk: onChunk
+        )
+    }
+
+    public func resetLocalAssistantConversation() async {
+        await lmService.resetConversation()
     }
 
     private func executePDFJob(

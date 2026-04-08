@@ -39,6 +39,8 @@ struct ContentView: View {
         switch store.selectedScreen {
         case .home:
             HomeScreen()
+        case .assistant:
+            LocalAssistantScreen()
         case .visual:
             VisualAnalysisScreen()
         case .segment:
@@ -157,6 +159,7 @@ struct HomeScreen: View {
             Text("Quick Actions")
                 .font(.title2.bold())
             LazyVGrid(columns: quickActionColumns, alignment: .leading, spacing: 12) {
+                quickTile(title: "Local Assistant", action: { store.selectedScreen = .assistant })
                 quickTile(title: "Analyze Image/PDF", action: { store.selectedScreen = .visual })
                 quickTile(title: "Detect & Segment", action: { store.selectedScreen = .segment })
                 quickTile(title: "Scanned PDF -> Audio", action: { store.selectedScreen = .scannedPDF })
@@ -231,6 +234,17 @@ private struct SavedWebhookTemplateDraft {
 
 private struct SegmentationBoxDraft {
     var text: String = ""
+}
+
+private struct AssistantMessage: Identifiable, Hashable {
+    enum Role {
+        case user
+        case assistant
+    }
+
+    let id = UUID()
+    let role: Role
+    let text: String
 }
 
 private let visualPresets: [VisualPreset] = [
@@ -980,6 +994,11 @@ struct SegmentationScreen: View {
                         NSWorkspace.shared.open(URL(fileURLWithPath: statusLogPath))
                     }
                 }
+                if store.latestVisualAnalysis != nil {
+                    Button("Ask About Result") {
+                        store.askAboutLatestVisualResult()
+                    }
+                }
             }
 
             Text("Summary")
@@ -1075,6 +1094,188 @@ struct SegmentationScreen: View {
                 }
                 try? await Task.sleep(for: .milliseconds(700))
             }
+        }
+    }
+}
+
+struct LocalAssistantScreen: View {
+    @EnvironmentObject private var store: AppStore
+    @State private var modelID = LMOptions().modelId
+    @State private var systemPrompt = LMOptions().systemPrompt
+    @State private var maxTokens = String(LMOptions().maxTokens)
+    @State private var temperature = String(LMOptions().temperature)
+    @State private var draftPrompt = ""
+    @State private var pinnedContextTitle = ""
+    @State private var pinnedContext = ""
+    @State private var messages: [AssistantMessage] = []
+    @State private var isRunning = false
+    @State private var runStatus = ""
+
+    var body: some View {
+        ScreenScrollView(maxWidth: 1080) {
+            Text("Local Assistant")
+                .font(.title2.bold())
+
+            ScreenSection(title: "Model") {
+                Picker("Preset", selection: $modelID) {
+                    ForEach(TextModelCatalog.presets) { preset in
+                        Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                    }
+                }
+                TextField("Model ID", text: $modelID)
+                TextField("Max tokens", text: $maxTokens)
+                TextField("Temperature", text: $temperature)
+                TextField("System prompt", text: $systemPrompt, axis: .vertical)
+                    .lineLimit(3, reservesSpace: true)
+            }
+
+            if !pinnedContext.isEmpty {
+                ScreenSection(title: pinnedContextTitle.isEmpty ? "Context" : pinnedContextTitle) {
+                    ScrollView {
+                        Text(pinnedContext)
+                            .textSelection(.enabled)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    .frame(minHeight: 120, maxHeight: 220)
+                    AdaptiveButtonRow {
+                        Button("Clear Context") {
+                            pinnedContextTitle = ""
+                            pinnedContext = ""
+                        }
+                        Button("Copy Context") {
+                            NSPasteboard.general.clearContents()
+                            NSPasteboard.general.setString(pinnedContext, forType: .string)
+                        }
+                    }
+                }
+            }
+
+            ScreenSection(title: "Conversation") {
+                ScrollView {
+                    VStack(alignment: .leading, spacing: 12) {
+                        if messages.isEmpty {
+                            Text("No messages yet.")
+                                .foregroundStyle(.secondary)
+                        } else {
+                            ForEach(messages) { message in
+                                VStack(alignment: .leading, spacing: 4) {
+                                    Text(message.role == .user ? "You" : "Assistant")
+                                        .font(.caption.bold())
+                                        .foregroundStyle(.secondary)
+                                    Text(message.text)
+                                        .textSelection(.enabled)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                }
+                            }
+                        }
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                .frame(minHeight: 260, maxHeight: 420)
+                if isRunning || !runStatus.isEmpty {
+                    Text(runStatus)
+                        .font(.caption)
+                        .foregroundStyle(isRunning ? .secondary : .secondary)
+                }
+            }
+
+            ScreenSection(title: "Prompt") {
+                TextField("Ask the local assistant", text: $draftPrompt, axis: .vertical)
+                    .lineLimit(4, reservesSpace: true)
+                AdaptiveButtonRow {
+                    Button("Send") {
+                        sendPrompt()
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .disabled(isRunning || draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+
+                    Button("Clear Conversation") {
+                        clearConversation()
+                    }
+                    .disabled(isRunning && messages.isEmpty)
+                }
+            }
+        }
+        .onAppear {
+            modelID = store.settings.lmDefaults.modelId
+            systemPrompt = store.settings.lmDefaults.systemPrompt
+            maxTokens = String(store.settings.lmDefaults.maxTokens)
+            temperature = String(store.settings.lmDefaults.temperature)
+            applyPendingSeedIfNeeded()
+        }
+    }
+
+    private func applyPendingSeedIfNeeded() {
+        guard let seed = store.consumeAssistantSeed() else { return }
+        pinnedContextTitle = seed.title
+        pinnedContext = seed.context
+        if draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            draftPrompt = seed.suggestedPrompt
+        }
+    }
+
+    private func sendPrompt() {
+        guard let resolvedMaxTokens = Int(maxTokens.trimmingCharacters(in: .whitespacesAndNewlines)),
+              let resolvedTemperature = Double(temperature.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+            store.latestError = "Enter numeric values for max tokens and temperature."
+            return
+        }
+
+        let prompt = draftPrompt.trimmingCharacters(in: .whitespacesAndNewlines)
+        messages.append(AssistantMessage(role: .user, text: prompt))
+        messages.append(AssistantMessage(role: .assistant, text: ""))
+        draftPrompt = ""
+        isRunning = true
+        runStatus = "Preparing local model..."
+
+        let assistantIndex = messages.count - 1
+        let options = LMOptions(
+            modelId: modelID,
+            systemPrompt: systemPrompt,
+            maxTokens: resolvedMaxTokens,
+            temperature: resolvedTemperature
+        )
+        store.settings.lmDefaults = options
+        store.saveSettings()
+
+        Task {
+            do {
+                let response = try await store.sendAssistantPrompt(
+                    prompt: prompt,
+                    context: pinnedContext.isEmpty ? nil : pinnedContext,
+                    options: options,
+                    progress: { message in
+                        Task { @MainActor in
+                            runStatus = message
+                        }
+                    },
+                    onChunk: { partial in
+                        Task { @MainActor in
+                            messages[assistantIndex] = AssistantMessage(role: .assistant, text: partial)
+                        }
+                    }
+                )
+                await MainActor.run {
+                    messages[assistantIndex] = AssistantMessage(role: .assistant, text: response)
+                    runStatus = "Response completed."
+                    isRunning = false
+                }
+            } catch {
+                await MainActor.run {
+                    messages.removeLast()
+                    store.latestError = error.localizedDescription
+                    runStatus = "Assistant failed."
+                    isRunning = false
+                }
+            }
+        }
+    }
+
+    private func clearConversation() {
+        messages.removeAll()
+        runStatus = ""
+        Task {
+            await store.resetAssistantConversation()
         }
     }
 }
@@ -1180,6 +1381,13 @@ struct ScannedPDFToAudioScreen: View {
                     Button("Open OCR Text") {
                         NSWorkspace.shared.open(URL(fileURLWithPath: transcriptPath))
                     }
+                    Button("Ask About OCR Text") {
+                        store.askAboutFile(
+                            path: transcriptPath,
+                            title: "Scanned PDF OCR result",
+                            suggestedPrompt: "Summarize this scanned document and identify the key points, entities, and next actions."
+                        )
+                    }
                 }
                 if let audioPath {
                     Button(audioPlayer?.isPlaying == true ? "Stop Audio" : "Play Audio") {
@@ -1207,6 +1415,13 @@ struct ScannedPDFToAudioScreen: View {
                             Spacer()
                             Button("OCR Text") {
                                 NSWorkspace.shared.open(URL(fileURLWithPath: result.transcriptPath))
+                            }
+                            Button("Ask") {
+                                store.askAboutFile(
+                                    path: result.transcriptPath,
+                                    title: URL(fileURLWithPath: result.pdfPath).lastPathComponent,
+                                    suggestedPrompt: "Summarize this scanned document and answer questions using the OCR text."
+                                )
                             }
                             if let jsonPath = result.jsonPath {
                                 Button("JSON") {
@@ -1892,6 +2107,13 @@ struct LibraryScreen: View {
                             Button("Reveal Transcript") {
                                 revealFile(transcriptPath)
                             }
+                            Button("Ask About Transcript") {
+                                store.askAboutFile(
+                                    path: transcriptPath,
+                                    title: URL(fileURLWithPath: transcriptPath).lastPathComponent,
+                                    suggestedPrompt: "Summarize this transcript and answer questions using only its content."
+                                )
+                            }
                         }
                         Button("Open Log") {
                             openPath(job.logPath)
@@ -1945,8 +2167,21 @@ struct ModelsScreen: View {
         ScreenScrollView {
             Text("Models")
                 .font(.title2.bold())
-            Text("Preset catalog for mlx-audio Swift + Python backends.")
+            Text("Preset catalog for local text, audio, and vision backends.")
                 .foregroundStyle(.secondary)
+            ScreenSection(title: "Text presets") {
+                VStack(alignment: .leading, spacing: 6) {
+                    ForEach(TextModelCatalog.presets) { preset in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("\(preset.title) — \(preset.summary)")
+                            Text(preset.id)
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                }
+            }
             ScreenSection(title: "TTS presets") {
                 VStack(alignment: .leading, spacing: 6) {
                     ForEach(SpeechCatalog.ttsPresets) { preset in
@@ -1995,6 +2230,17 @@ struct SettingsScreen: View {
             ScreenSection(title: "Defaults") {
                 TextField("Output folder", text: $store.settings.outputFolderPath)
                 TextField("Logging level", text: $store.settings.loggingLevel)
+            }
+            ScreenSection(title: "Local Assistant") {
+                Picker("Default text model", selection: $store.settings.lmDefaults.modelId) {
+                    ForEach(TextModelCatalog.presets) { preset in
+                        Text("\(preset.title) — \(preset.summary)").tag(preset.id)
+                    }
+                }
+                TextField("System prompt", text: $store.settings.lmDefaults.systemPrompt, axis: .vertical)
+                    .lineLimit(3, reservesSpace: true)
+                TextField("Max tokens", value: $store.settings.lmDefaults.maxTokens, format: .number)
+                TextField("Temperature", value: $store.settings.lmDefaults.temperature, format: .number)
             }
             ScreenSection(title: "TTS") {
                 Picker("Default TTS preset", selection: $store.settings.ttsDefaults.modelId) {

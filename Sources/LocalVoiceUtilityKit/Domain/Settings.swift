@@ -136,6 +136,7 @@ public struct AppSettings: Codable, Sendable {
     public var loggingLevel: String
     public var ttsDefaults: TTSOptions
     public var sttDefaults: STTOptions
+    public var lmDefaults: LMOptions
     public var ttsVoiceByModel: [String: String]
     public var preferredReaderLanguage: String
     public var preferredTranscriptionLanguage: String
@@ -150,6 +151,7 @@ public struct AppSettings: Codable, Sendable {
         loggingLevel: String = "info",
         ttsDefaults: TTSOptions = TTSOptions(),
         sttDefaults: STTOptions = STTOptions(),
+        lmDefaults: LMOptions = LMOptions(),
         ttsVoiceByModel: [String: String] = [:],
         preferredReaderLanguage: String = "en",
         preferredTranscriptionLanguage: String = "en",
@@ -163,6 +165,7 @@ public struct AppSettings: Codable, Sendable {
         self.loggingLevel = loggingLevel
         self.ttsDefaults = ttsDefaults
         self.sttDefaults = sttDefaults
+        self.lmDefaults = lmDefaults
         self.ttsVoiceByModel = ttsVoiceByModel
         self.preferredReaderLanguage = preferredReaderLanguage
         self.preferredTranscriptionLanguage = preferredTranscriptionLanguage
@@ -178,6 +181,7 @@ public struct AppSettings: Codable, Sendable {
         case loggingLevel
         case ttsDefaults
         case sttDefaults
+        case lmDefaults
         case ttsVoiceByModel
         case preferredReaderLanguage
         case preferredTranscriptionLanguage
@@ -194,6 +198,7 @@ public struct AppSettings: Codable, Sendable {
         loggingLevel = try c.decodeIfPresent(String.self, forKey: .loggingLevel) ?? "info"
         ttsDefaults = try c.decodeIfPresent(TTSOptions.self, forKey: .ttsDefaults) ?? TTSOptions()
         sttDefaults = try c.decodeIfPresent(STTOptions.self, forKey: .sttDefaults) ?? STTOptions()
+        lmDefaults = try c.decodeIfPresent(LMOptions.self, forKey: .lmDefaults) ?? LMOptions()
         ttsVoiceByModel = try c.decodeIfPresent([String: String].self, forKey: .ttsVoiceByModel) ?? [:]
         preferredReaderLanguage = try c.decodeIfPresent(String.self, forKey: .preferredReaderLanguage) ?? ttsDefaults.languageCode
         preferredTranscriptionLanguage = try c.decodeIfPresent(String.self, forKey: .preferredTranscriptionLanguage) ?? sttDefaults.languageCode
@@ -212,6 +217,7 @@ public struct AppSettings: Codable, Sendable {
         try c.encode(loggingLevel, forKey: .loggingLevel)
         try c.encode(ttsDefaults, forKey: .ttsDefaults)
         try c.encode(sttDefaults, forKey: .sttDefaults)
+        try c.encode(lmDefaults, forKey: .lmDefaults)
         try c.encode(ttsVoiceByModel, forKey: .ttsVoiceByModel)
         try c.encode(preferredReaderLanguage, forKey: .preferredReaderLanguage)
         try c.encode(preferredTranscriptionLanguage, forKey: .preferredTranscriptionLanguage)
